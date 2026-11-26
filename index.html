@@ -1,0 +1,1683 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>案内図作成ツール</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --font-sheet:"小塚ゴシック Pro R","Kozuka Gothic Pro R","小塚ゴシック Pr6N R","Kozuka Gothic Pr6N R","Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;  /* タイトル・工事名・所在地・地図見出し（元のWordと同じ） */
+    --font-ms:"ＭＳ Ｐゴシック","MS PGothic","MS PGothic",Osaka,"Noto Sans JP",sans-serif;  /* 施工会社・設計事務所欄（元のWordと同じ） */
+    --ink:#2a2926;
+    --line:#8a8478;          /* メインカラー：グレージュ（見出し帯・枠線） */
+    --line-soft:#d4d0c8;
+    --paper:#ffffff;
+    --wash:#f5f3ef;
+    --accent:#ee7800;        /* アクセントカラー：だいだい色（ラベル・ピン） */
+    --accent-soft:#fdeedd;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:"Noto Sans JP",sans-serif;
+    color:var(--ink);
+    background:var(--wash);
+    padding:24px;
+  }
+  h1,h2{font-family:"Noto Serif JP",serif;}
+
+  /* ---------- 入力パネル ---------- */
+  .panel{
+    max-width:900px;
+    margin:0 auto 28px auto;
+    background:var(--paper);
+    border:1px solid var(--line-soft);
+    border-radius:10px;
+    padding:24px 28px;
+  }
+  .panel h1{
+    font-size:20px;
+    margin:0 0 4px 0;
+    letter-spacing:.05em;
+  }
+  .panel .sub{
+    font-size:12.5px;
+    color:#5c6577;
+    margin:0 0 20px 0;
+    line-height:1.7;
+  }
+  .grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px 20px;
+  }
+  .field{display:flex;flex-direction:column;gap:4px;}
+  .field.full{grid-column:1/-1;}
+  .field label{
+    font-size:11.5px;
+    color:#5c6577;
+    font-weight:500;
+  }
+  .field input, .field textarea, .field select{
+    font-family:"Noto Sans JP",sans-serif;
+    font-size:13.5px;
+    padding:8px 10px;
+    border:1px solid var(--line-soft);
+    border-radius:5px;
+    background:#fbfbfd;
+    color:var(--ink);
+  }
+  .field input:focus, .field textarea:focus, .field select:focus{
+    outline:none;
+    border-color:var(--accent);
+    background:#fff;
+  }
+  .field textarea{resize:vertical;min-height:44px;line-height:1.5;}
+  .required{color:var(--accent);font-weight:700;}
+
+  .actions{
+    margin-top:20px;
+    display:flex;
+    gap:10px;
+    align-items:center;
+    flex-wrap:wrap;
+  }
+  button{
+    font-family:"Noto Sans JP",sans-serif;
+    font-size:13.5px;
+    font-weight:500;
+    padding:10px 20px;
+    border-radius:6px;
+    border:1px solid var(--line);
+    cursor:pointer;
+    transition:opacity .15s ease;
+  }
+  #genBtn{background:var(--line);color:#fff;}
+  #genBtn:hover{opacity:.88;}
+  #genBtn:disabled{opacity:.5;cursor:default;}
+  #printBtn{background:#fff;color:var(--line);}
+  #printBtn:hover,#saveBtn:hover,#openBtn:hover{background:var(--wash);}
+  #saveBtn,#openBtn{background:#fff;color:var(--line);}
+  .status{font-size:12.5px;color:#5c6577;}
+  .status.err{color:var(--accent);}
+
+  /* ---------- 出力（案内図）：A4横 297×210mm（余白8mm → 内寸281×194mm）固定 ---------- */
+  #sheetWrap{max-width:1062px;margin:0 auto;overflow:hidden;}
+  #sheet{
+    width:281mm;
+    height:194mm;
+    display:flex;
+    flex-direction:column;
+    background:#fff;
+    border:0.4mm solid var(--line);
+    padding:5mm 6mm 3.5mm 6mm;
+    transform-origin:top left;
+    color:var(--ink);
+    font-family:var(--font-sheet);
+  }
+  .sheet-head{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    border-bottom:0.5mm solid var(--line);
+    padding-bottom:2mm;
+    margin-bottom:3mm;
+    flex:none;
+  }
+  .sheet-meta{text-align:left;line-height:1.45;}
+  .sheet-meta .proj{font-size:16pt;font-weight:400;}
+  .sheet-meta .addr{font-size:12pt;color:#1e1e1c;}
+  .gmap-link{display:flex;align-items:center;gap:2.5mm;}
+  .gmap-link .qr{display:block;width:16mm;height:16mm;}
+  .gmap-link .qr svg{display:block;width:100%;height:100%;}
+  .qr-cap{font-size:7pt;line-height:1.5;text-align:left;color:#1e1e1c;}
+  .qr-cap a{color:var(--accent);text-decoration:none;font-weight:500;}
+
+  .maps{
+    position:relative;
+    flex:1;
+    min-height:0;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:33mm;
+    margin-bottom:3mm;
+  }
+  .map-box{
+    position:relative;
+    display:flex;
+    flex-direction:column;
+    min-height:0;
+    border:0.3mm solid var(--line);
+    overflow:hidden;
+    background:#eef0f2;
+  }
+  .map-box .cap{
+    flex:none;
+    font-size:9pt;
+    font-weight:700;
+    letter-spacing:.1em;
+    padding:1.2mm 3mm;
+    background:var(--line);
+    color:#fff;
+    display:flex;
+    justify-content:space-between;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;
+  }
+  .map-box .cap span.zoom{font-weight:400;opacity:.9;}
+  .map-box .cap{display:none;}
+  .leaflet-map{position:relative;width:100%;flex:1;min-height:0;}
+  .lm{background:none!important;border:none!important;}
+  .lm .lmt{position:absolute;left:0;top:0;transform:translate(-50%,-50%);white-space:nowrap;font-size:11.5px;line-height:1.2;font-weight:700;color:#111;
+    font-family:"小塚ゴシック Pro R","Kozuka Gothic Pro R","Noto Sans JP",sans-serif;
+    text-shadow:-1.5px -1.5px 0 #fff,1.5px -1.5px 0 #fff,-1.5px 1.5px 0 #fff,1.5px 1.5px 0 #fff,0 -1.5px 0 #fff,0 1.5px 0 #fff,-1.5px 0 0 #fff,1.5px 0 0 #fff;}
+  .lm .lmd{display:inline-block;width:9px;height:9px;border-radius:50%;border:1.5px solid #fff;margin-right:3px;vertical-align:-1px;box-shadow:0 0 0 .5px #666;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .lm.road .lmt{font-style:italic;color:#7a4a00;}
+  .addmode .leaflet-container{cursor:crosshair!important;}
+  .placeholder{
+    position:absolute;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    color:#8a8d92;font-size:11pt;text-align:center;padding:5mm;
+  }
+  .zbtns{position:absolute;left:8px;top:8px;z-index:800;display:flex;flex-direction:column;background:#fff;border:2px solid rgba(0,0,0,.25);border-radius:4px;overflow:hidden;}
+  .zbtns button{width:28px;height:28px;border:0;border-radius:0;padding:0;background:#fff;color:#222;font-size:16px;font-weight:700;cursor:pointer;line-height:1;}
+  .zbtns button+button{border-top:1px solid #ccc;}
+  .zbtns button:hover{background:#f1ece4;}
+  .gwrap{position:absolute;inset:0;}
+  .gwrap iframe{border:0;width:100%;height:100%;display:block;pointer-events:none;}
+  .gpin-label-unused{position:absolute;left:50%;top:calc(50% - 64px);transform:translateX(-50%);background:var(--accent);color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:3px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.35);pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+
+  .foot{
+    flex:none;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    column-gap:33mm;
+    align-items:center;
+    border-top:0.5mm solid var(--line);
+    padding-top:2.5mm;
+    min-height:15mm;
+  }
+  .foot-title{font-family:var(--font-sheet);font-size:16pt;text-align:center;}
+  .foot-right{display:flex;align-items:center;justify-content:space-between;gap:6mm;font-family:var(--font-sheet);}
+  .foot-co{font-size:16pt;white-space:pre-wrap;line-height:1.3;}
+  .foot-lic{font-size:7pt;white-space:pre-wrap;line-height:1.5;}
+  .legend-note{flex:none;margin-top:1.5mm;font-size:7.5pt;color:#7a7c80;text-align:right;}
+
+  .panel{padding:22px 26px;}
+  .panel h1{margin-bottom:14px;}
+  .panel h1 .ver{font:400 11px "Noto Sans JP",sans-serif;color:#8a8d92;margin-left:8px;letter-spacing:0;}
+  .form{display:grid;grid-template-columns:auto 1fr;gap:10px 14px;align-items:center;}
+  .form > label{font-size:12.5px;color:#5c6577;}
+  .form .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .form input,.form select{font:13.5px "Noto Sans JP",sans-serif;padding:7px 9px;border:1px solid var(--line-soft);border-radius:5px;background:#fbfbfd;color:var(--ink);}
+  .form input:focus,.form select:focus{outline:none;border-color:var(--accent);background:#fff;}
+  .form .row > input{flex:1 1 260px;min-width:0;}
+  .form .row > input.f-name{flex:0 1 220px;}
+  .form .row > input.f-custom{flex:1 1 240px;}
+  .form .sama{font-size:13.5px;margin-left:-2px;}
+  .form #genBtn{flex:none;padding:8px 22px;}
+  .link-btn{border:0;background:none;padding:4px 2px;font-size:12px;color:var(--line);text-decoration:underline;text-underline-offset:3px;}
+  .panel > .status{margin:8px 0 0;min-height:1em;line-height:1.6;}
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--line-soft);}
+  .toolbar .group{display:flex;gap:6px;align-items:center;}
+  .toolbar .group.end{margin-left:auto;}
+  .toolbar .gl{font-size:12px;color:#5c6577;margin-right:2px;}
+  .sub-btn{padding:6px 12px;font-size:12.5px;background:#fff;color:var(--ink);border:1px solid var(--line-soft);}
+  .sub-btn:hover{background:var(--wash);}
+  .sub-btn.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .toolbar .sub-btn{color:var(--ink);background:#fff;}
+  .toolbar .sub-btn:hover{background:var(--wash);}
+  .toolbar .sub-btn.on{background:var(--accent);color:#fff;}
+  .toolbar #printBtn,.toolbar #saveBtn,.toolbar #openBtn{color:var(--ink);}
+  .help{font-size:12px;color:#5c6577;line-height:1.7;margin:6px 0 0;}
+  .help:empty{display:none;}
+  .help.err{color:var(--accent);}
+  .tip{font-size:11.5px;color:#8a8d92;line-height:1.7;margin:10px 0 0;}
+  .checks{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:12.5px;}
+  .checks label{display:flex;align-items:center;gap:4px;font-size:12.5px!important;color:var(--ink)!important;}
+  .more{margin-top:12px;}
+  .more summary{cursor:pointer;font-size:12.5px;color:#5c6577;margin-bottom:12px;}
+  button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  @media (max-width:720px){ .form{grid-template-columns:1fr;} .toolbar .group.end{margin-left:0;} }
+  @media (max-width:720px){
+    .grid{grid-template-columns:1fr;}
+  }
+
+  @page{size:A4 landscape;margin:0;}
+  @media print{
+    /* 用紙（A4横）いっぱいの枠を作り、その真ん中に案内図を置く */
+    html,body{width:297mm;height:210mm;margin:0;padding:0;background:#fff;overflow:hidden;}
+    body{display:flex;align-items:center;justify-content:center;}
+    .panel{display:none !important;}
+    #sheetWrap{max-width:none;width:281mm;height:194mm !important;flex:none;overflow:visible;margin:0;}
+    #sheet{transform:none !important;border:0.4mm solid var(--line);break-inside:avoid;page-break-after:avoid;}
+    .leaflet-control-zoom{display:none;}
+    .vtx,#ctxMenu,.zbtns{display:none !important;}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  }
+</style>
+</head>
+<body>
+
+  <div class="panel">
+    <h1>案内図作成ツール <span class="ver">2026-11-26 版E</span></h1>
+
+    <div class="form">
+      <label for="custName">顧客名</label>
+      <div class="row">
+        <input id="custName" type="text" placeholder="例：藤井　湧太" class="f-name">
+        <span class="sama">様</span>
+        <select id="workType">
+          <option value="様邸新築工事">邸新築工事</option>
+          <option value="様邸リフォーム工事">邸リフォーム工事</option>
+          <option value="custom">自由入力</option>
+        </select>
+        <input id="customTitle" type="text" placeholder="工事名をそのまま入力（例：○○様邸外構工事）" class="f-custom" hidden>
+      </div>
+      <label for="address">住所</label>
+      <div class="row">
+        <input id="address" type="text" placeholder="例：群馬県前橋市若宮町二丁目457-13" value="">
+        <button type="button" class="link-btn" onclick="openGoogleMaps()">Googleマップで開く ↗</button>
+      </div>
+      <label for="coordInput">座標</label>
+      <div class="row">
+        <input id="coordInput" type="text" placeholder="例：36.40177361017317, 139.07117866735624（ANDPADのピン位置。入っていると住所より優先）">
+        <button id="genBtn" onclick="generateMap()">地図を作成</button>
+      </div>
+    </div>
+    <input id="projectName" type="hidden" value="">
+    <textarea id="andpadText" hidden></textarea>
+    <input id="googleMapsLink" type="hidden" value="">
+    <p class="status" id="status"></p>
+
+    <div class="toolbar">
+      <div class="group">
+        <span class="gl">敷地</span>
+        <button type="button" class="sub-btn" id="drawBtn" onclick="toggleDraw()" title="拡大図で敷地の角を順にクリックして形をなぞる">形を描く</button>
+        <button type="button" class="sub-btn" id="photoBtn" onclick="togglePhoto()" title="拡大図を航空写真にして敷地を合わせやすくする">航空写真</button>
+        <button type="button" class="sub-btn" onclick="resetLot()" title="詳細設定の幅・奥行の四角に戻す">四角に戻す</button>
+      </div>
+      <div class="group">
+        <span class="gl">目印</span>
+        <button type="button" class="sub-btn" id="lmAutoBtn" onclick="autoLandmarks()" title="学校・駅・コンビニ・道路名などを自動で載せる（地理院地図のとき）">探す</button>
+        <button type="button" class="sub-btn" id="lmAddBtn" onclick="toggleAddMark()" title="地図をクリックして目印を追加">手で追加</button>
+        <button type="button" class="sub-btn" onclick="clearMarks()">全部消す</button>
+      </div>
+      <div class="group end">
+        <button id="printBtn" class="sub-btn" onclick="printSheet()">印刷 / PDF</button>
+        <button id="saveBtn" class="sub-btn" type="button" onclick="saveProject()" title="後で同じ状態から編集できるファイルを保存">保存</button>
+        <button id="openBtn" class="sub-btn" type="button" onclick="document.getElementById('projectFile').click()">開く</button>
+        <input type="file" id="projectFile" accept=".json,application/json" style="display:none" onchange="loadProject(this.files[0]);this.value=''">
+      </div>
+    </div>
+    <p class="help" id="lotStatus"></p>
+    <p class="help" id="lmStatus"></p>
+    <p class="help" id="saveStatus"></p>
+    <p class="tip">赤い敷地は中をドラッグで移動（位置も合います）・辺をドラッグで平行移動・白い丸で角・右の赤い丸で回転。座標は座標欄に貼るか、このページの空いている所で Ctrl+V でも入ります。目印はドラッグで移動・ダブルクリックで名前変更・右クリックで削除。</p>
+
+    <details class="more">
+      <summary>詳細設定</summary>
+      <div class="grid">
+        <div class="field">
+          <label for="addressLabel">案内図に表示する所在地（空欄なら住所）</label>
+          <input id="addressLabel" type="text" placeholder="例：申請地：○○県○○市○○町1-2-3" value="">
+        </div>
+        <div class="field">
+          <label for="markerLabel">敷地のラベル</label>
+          <input id="markerLabel" type="text" placeholder="例：建設地" value="建設地">
+        </div>
+        <div class="field">
+          <label for="mapSource">地図の種類（前回の選択を覚えます）</label>
+          <select id="mapSource">
+            <option value="google">Googleマップ</option>
+            <option value="gsi">地理院地図（目印の自動追加・クリックで位置合わせ可）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gmapPref">Googleマップのリンクの位置</label>
+          <select id="gmapPref">
+            <option value="center">地図の中心位置（標準）</option>
+            <option value="pin">場所のピン位置</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="wideScale">広域図のスケールバー（m）</label>
+          <input id="wideScale" type="number" min="10" step="10" value="200">
+        </div>
+        <div class="field">
+          <label for="zoomScale">拡大図のスケールバー（m）</label>
+          <input id="zoomScale" type="number" min="5" step="5" value="30">
+        </div>
+        <div class="field">
+          <label for="lotW">敷地の幅（m）</label>
+          <input id="lotW" type="number" min="3" step="1" value="18">
+        </div>
+        <div class="field">
+          <label for="lotD">敷地の奥行（m）</label>
+          <input id="lotD" type="number" min="3" step="1" value="15">
+        </div>
+        <div class="field full">
+          <label>自動で載せる目印</label>
+          <div class="checks">
+            <label><input type="checkbox" class="lmCat" value="school" checked> 学校</label>
+            <label><input type="checkbox" class="lmCat" value="station" checked> 駅</label>
+            <label><input type="checkbox" class="lmCat" value="shop" checked> コンビニ・スーパー</label>
+            <label><input type="checkbox" class="lmCat" value="public" checked> 郵便局・役所・警察・消防</label>
+            <label><input type="checkbox" class="lmCat" value="hospital"> 病院</label>
+            <label><input type="checkbox" class="lmCat" value="road" checked> 道路名</label>
+            <label><input type="checkbox" id="autoLm" checked> 地図作成時に自動で載せる</label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="designerSelect">設計者（前回の選択を覚えます）</label>
+          <select id="designerSelect" onchange="applyDesignerPreset()">
+            <option value="kitazume">北爪俊之（一級建築士）</option>
+            <option value="yamazaki">山﨑恵美（二級建築士）</option>
+            <option value="hoshino">星野武由（一級建築士）</option>
+            <option value="seki">関　敏孝（一級建築士）</option>
+            <option value="custom">その他（自由入力）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="companyInfo">施工会社</label>
+          <textarea id="companyInfo" rows="2">株式会社　関工務所</textarea>
+        </div>
+        <div class="field full">
+          <label for="designerInfo">設計事務所・資格情報</label>
+          <textarea id="designerInfo" rows="3">設計事務所　群馬県知事登録第2030号
+特定建設業許可　群馬県知事（特-2）第9109号
+一級建築士　大臣登録第374701号　北爪　俊之</textarea>
+        </div>
+        <div class="field">
+          <label for="colorMain">メインカラー</label>
+          <input id="colorMain" type="color" value="#8a8478" oninput="applyColors()" style="height:36px;padding:2px;">
+        </div>
+        <div class="field">
+          <label for="colorAccent">アクセントカラー</label>
+          <input id="colorAccent" type="color" value="#ee7800" oninput="applyColors()" style="height:36px;padding:2px;">
+        </div>
+        <div class="field full">
+          <label for="gKey">Google Maps Embed APIキー（任意・このパソコンにだけ保存）</label>
+          <input id="gKey" type="text" placeholder="AIza で始まるキー" autocomplete="off">
+        </div>
+      </div>
+      <p class="help" id="fileNameHint"></p>
+    </details>
+  </div>
+
+  <div id="sheetWrap"><div id="sheet">
+    <div class="sheet-head">
+      <div class="sheet-meta">
+        <div class="proj" id="outProject">○○様邸新築工事</div>
+        <div class="addr" id="outAddress">申請地：○○県○○市○○町1-2-3</div>
+      </div>
+      <div class="gmap-link" id="outGmapWrap" style="visibility:hidden;">
+        <a id="outQrLink" class="qr" href="#" target="_blank" rel="noopener"></a>
+        <div class="qr-cap">スマートフォンで読み取るか<br>クリックでGoogleマップを開く<br><a id="outGmapLink" href="#" target="_blank" rel="noopener">Googleマップで見る ↗</a></div>
+      </div>
+    </div>
+
+    <div class="maps">
+      <svg id="links" style="position:absolute;left:0;top:0;pointer-events:none;z-index:2000;overflow:visible;" width="0" height="0"></svg>
+      <div class="map-box">
+        <div class="cap"><span>広域図</span><span class="zoom">縮尺：広域</span></div>
+        <div id="wideMap" class="leaflet-map placeholder-wrap">
+          <div class="placeholder">住所を入力して「地図を作成」を押すと<br>ここに広域図が表示されます</div>
+        </div>
+      </div>
+      <div class="map-box">
+        <div class="cap"><span>拡大図</span><span class="zoom">縮尺：拡大</span></div>
+        <div id="zoomMap" class="leaflet-map placeholder-wrap">
+          <div class="placeholder">住所を入力して「地図を作成」を押すと<br>ここに拡大図が表示されます</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <div class="foot-title">案内図</div>
+      <div class="foot-right">
+        <div class="foot-co" id="outCompany">株式会社　関工務所</div>
+        <div class="foot-lic" id="outDesigner">設計事務所　群馬県知事登録第2030号
+特定建設業許可　群馬県知事（特-2）第9109号
+一級建築士　大臣登録第374701号　北爪　俊之</div>
+      </div>
+    </div>
+    <div class="legend-note" id="outCredit">地図データ：地理院タイル（国土地理院）</div>
+  </div></div>
+
+<script>
+/* qrcode-generator 1.4.4 (MIT) */
+// QR Code Generator for JavaScript
+// Copyright (c) 2009 Kazuhiko Arase
+// Licensed under the MIT license:
+// The word 'QR Code' is registered trademark of
+var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],f={},c=function(t,r){o=function(t){for(var r=new Array(t),e=0;e<t;e+=1){r[e]=new Array(t);for(var n=0;n<t;n+=1)r[e][n]=null}return r}(i=4*e+17),l(0,0),l(i-7,0),l(0,i-7),s(),h(),d(t,r),e>=7&&v(t),null==a&&(a=p(e,n,u)),w(a,r)},l=function(t,r){for(var e=-1;e<=7;e+=1)if(!(t+e<=-1||i<=t+e))for(var n=-1;n<=7;n+=1)r+n<=-1||i<=r+n||(o[t+e][r+n]=0<=e&&e<=6&&(0==n||6==n)||0<=n&&n<=6&&(0==e||6==e)||2<=e&&e<=4&&2<=n&&n<=4)},h=function(){for(var t=8;t<i-8;t+=1)null==o[t][6]&&(o[t][6]=t%2==0);for(var r=8;r<i-8;r+=1)null==o[6][r]&&(o[6][r]=r%2==0)},s=function(){for(var t=B.getPatternPosition(e),r=0;r<t.length;r+=1)for(var n=0;n<t.length;n+=1){var i=t[r],a=t[n];if(null==o[i][a])for(var u=-2;u<=2;u+=1)for(var f=-2;f<=2;f+=1)o[i+u][a+f]=-2==u||2==u||-2==f||2==f||0==u&&0==f}},v=function(t){for(var r=B.getBCHTypeNumber(e),n=0;n<18;n+=1){var a=!t&&1==(r>>n&1);o[Math.floor(n/3)][n%3+i-8-3]=a}for(n=0;n<18;n+=1){a=!t&&1==(r>>n&1);o[n%3+i-8-3][Math.floor(n/3)]=a}},d=function(t,r){for(var e=n<<3|r,a=B.getBCHTypeInfo(e),u=0;u<15;u+=1){var f=!t&&1==(a>>u&1);u<6?o[u][8]=f:u<8?o[u+1][8]=f:o[i-15+u][8]=f}for(u=0;u<15;u+=1){f=!t&&1==(a>>u&1);u<8?o[8][i-u-1]=f:u<9?o[8][15-u-1+1]=f:o[8][15-u-1]=f}o[i-8][8]=!t},w=function(t,r){for(var e=-1,n=i-1,a=7,u=0,f=B.getMaskFunction(r),c=i-1;c>0;c-=2)for(6==c&&(c-=1);;){for(var g=0;g<2;g+=1)if(null==o[n][c-g]){var l=!1;u<t.length&&(l=1==(t[u]>>>a&1)),f(n,c-g)&&(l=!l),o[n][c-g]=l,-1==(a-=1)&&(u+=1,a=7)}if((n+=e)<0||i<=n){n-=e,e=-e;break}}},p=function(t,r,e){for(var n=A.getRSBlocks(t,r),o=b(),i=0;i<e.length;i+=1){var a=e[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var u=0;for(i=0;i<n.length;i+=1)u+=n[i].dataCount;if(o.getLengthInBits()>8*u)throw"code length overflow. ("+o.getLengthInBits()+">"+8*u+")";for(o.getLengthInBits()+4<=8*u&&o.put(0,4);o.getLengthInBits()%8!=0;)o.putBit(!1);for(;!(o.getLengthInBits()>=8*u||(o.put(236,8),o.getLengthInBits()>=8*u));)o.put(17,8);return function(t,r){for(var e=0,n=0,o=0,i=new Array(r.length),a=new Array(r.length),u=0;u<r.length;u+=1){var f=r[u].dataCount,c=r[u].totalCount-f;n=Math.max(n,f),o=Math.max(o,c),i[u]=new Array(f);for(var g=0;g<i[u].length;g+=1)i[u][g]=255&t.getBuffer()[g+e];e+=f;var l=B.getErrorCorrectPolynomial(c),h=k(i[u],l.getLength()-1).mod(l);for(a[u]=new Array(l.getLength()-1),g=0;g<a[u].length;g+=1){var s=g+h.getLength()-a[u].length;a[u][g]=s>=0?h.getAt(s):0}}var v=0;for(g=0;g<r.length;g+=1)v+=r[g].totalCount;var d=new Array(v),w=0;for(g=0;g<n;g+=1)for(u=0;u<r.length;u+=1)g<i[u].length&&(d[w]=i[u][g],w+=1);for(g=0;g<o;g+=1)for(u=0;u<r.length;u+=1)g<a[u].length&&(d[w]=a[u][g],w+=1);return d}(o,n)};f.addData=function(t,r){var e=null;switch(r=r||"Byte"){case"Numeric":e=M(t);break;case"Alphanumeric":e=x(t);break;case"Byte":e=m(t);break;case"Kanji":e=L(t);break;default:throw"mode:"+r}u.push(e),a=null},f.isDark=function(t,r){if(t<0||i<=t||r<0||i<=r)throw t+","+r;return o[t][r]},f.getModuleCount=function(){return i},f.make=function(){if(e<1){for(var t=1;t<40;t++){for(var r=A.getRSBlocks(t,n),o=b(),i=0;i<u.length;i++){var a=u[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var g=0;for(i=0;i<r.length;i++)g+=r[i].dataCount;if(o.getLengthInBits()<=8*g)break}e=t}c(!1,function(){for(var t=0,r=0,e=0;e<8;e+=1){c(!0,e);var n=B.getLostPoint(f);(0==e||t>n)&&(t=n,r=e)}return r}())},f.createTableTag=function(t,r){t=t||2;var e="";e+='<table style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: "+(r=void 0===r?4*t:r)+"px;",e+='">',e+="<tbody>";for(var n=0;n<f.getModuleCount();n+=1){e+="<tr>";for(var o=0;o<f.getModuleCount();o+=1)e+='<td style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: 0px;",e+=" width: "+t+"px;",e+=" height: "+t+"px;",e+=" background-color: ",e+=f.isDark(n,o)?"#000000":"#ffffff",e+=";",e+='"/>';e+="</tr>"}return e+="</tbody>",e+="</table>"},f.createSvgTag=function(t,r,e,n){var o={};"object"==typeof arguments[0]&&(t=(o=arguments[0]).cellSize,r=o.margin,e=o.alt,n=o.title),t=t||2,r=void 0===r?4*t:r,(e="string"==typeof e?{text:e}:e||{}).text=e.text||null,e.id=e.text?e.id||"qrcode-description":null,(n="string"==typeof n?{text:n}:n||{}).text=n.text||null,n.id=n.text?n.id||"qrcode-title":null;var i,a,u,c,g=f.getModuleCount()*t+2*r,l="";for(c="l"+t+",0 0,"+t+" -"+t+",0 0,-"+t+"z ",l+='<svg version="1.1" xmlns="http://www.w3.org/2000/svg"',l+=o.scalable?"":' width="'+g+'px" height="'+g+'px"',l+=' viewBox="0 0 '+g+" "+g+'" ',l+=' preserveAspectRatio="xMinYMin meet"',l+=n.text||e.text?' role="img" aria-labelledby="'+y([n.id,e.id].join(" ").trim())+'"':"",l+=">",l+=n.text?'<title id="'+y(n.id)+'">'+y(n.text)+"</title>":"",l+=e.text?'<description id="'+y(e.id)+'">'+y(e.text)+"</description>":"",l+='<rect width="100%" height="100%" fill="white" cx="0" cy="0"/>',l+='<path d="',a=0;a<f.getModuleCount();a+=1)for(u=a*t+r,i=0;i<f.getModuleCount();i+=1)f.isDark(a,i)&&(l+="M"+(i*t+r)+","+u+c);return l+='" stroke="transparent" fill="black"/>',l+="</svg>"},f.createDataURL=function(t,r){t=t||2,r=void 0===r?4*t:r;var e=f.getModuleCount()*t+2*r,n=r,o=e-r;return I(e,e,function(r,e){if(n<=r&&r<o&&n<=e&&e<o){var i=Math.floor((r-n)/t),a=Math.floor((e-n)/t);return f.isDark(a,i)?0:1}return 1})},f.createImgTag=function(t,r,e){t=t||2,r=void 0===r?4*t:r;var n=f.getModuleCount()*t+2*r,o="";return o+="<img",o+=' src="',o+=f.createDataURL(t,r),o+='"',o+=' width="',o+=n,o+='"',o+=' height="',o+=n,o+='"',e&&(o+=' alt="',o+=y(e),o+='"'),o+="/>"};var y=function(t){for(var r="",e=0;e<t.length;e+=1){var n=t.charAt(e);switch(n){case"<":r+="&lt;";break;case">":r+="&gt;";break;case"&":r+="&amp;";break;case'"':r+="&quot;";break;default:r+=n}}return r};return f.createASCII=function(t,r){if((t=t||1)<2)return function(t){t=void 0===t?2:t;var r,e,n,o,i,a=1*f.getModuleCount()+2*t,u=t,c=a-t,g={"██":"█","█ ":"▀"," █":"▄","  ":" "},l={"██":"▀","█ ":"▀"," █":" ","  ":" "},h="";for(r=0;r<a;r+=2){for(n=Math.floor((r-u)/1),o=Math.floor((r+1-u)/1),e=0;e<a;e+=1)i="█",u<=e&&e<c&&u<=r&&r<c&&f.isDark(n,Math.floor((e-u)/1))&&(i=" "),u<=e&&e<c&&u<=r+1&&r+1<c&&f.isDark(o,Math.floor((e-u)/1))?i+=" ":i+="█",h+=t<1&&r+1>=c?l[i]:g[i];h+="\n"}return a%2&&t>0?h.substring(0,h.length-a-1)+Array(a+1).join("▀"):h.substring(0,h.length-1)}(r);t-=1,r=void 0===r?2*t:r;var e,n,o,i,a=f.getModuleCount()*t+2*r,u=r,c=a-r,g=Array(t+1).join("██"),l=Array(t+1).join("  "),h="",s="";for(e=0;e<a;e+=1){for(o=Math.floor((e-u)/t),s="",n=0;n<a;n+=1)i=1,u<=n&&n<c&&u<=e&&e<c&&f.isDark(o,Math.floor((n-u)/t))&&(i=0),s+=i?g:l;for(o=0;o<t;o+=1)h+=s+"\n"}return h.substring(0,h.length-1)},f.renderTo2dContext=function(t,r){r=r||2;for(var e=f.getModuleCount(),n=0;n<e;n++)for(var o=0;o<e;o++)t.fillStyle=f.isDark(n,o)?"black":"white",t.fillRect(n*r,o*r,r,r)},f};t.stringToBytes=(t.stringToBytesFuncs={default:function(t){for(var r=[],e=0;e<t.length;e+=1){var n=t.charCodeAt(e);r.push(255&n)}return r}}).default,t.createStringToBytes=function(t,r){var e=function(){for(var e=S(t),n=function(){var t=e.read();if(-1==t)throw"eof";return t},o=0,i={};;){var a=e.read();if(-1==a)break;var u=n(),f=n()<<8|n();i[String.fromCharCode(a<<8|u)]=f,o+=1}if(o!=r)throw o+" != "+r;return i}(),n="?".charCodeAt(0);return function(t){for(var r=[],o=0;o<t.length;o+=1){var i=t.charCodeAt(o);if(i<128)r.push(i);else{var a=e[t.charAt(o)];"number"==typeof a?(255&a)==a?r.push(a):(r.push(a>>>8),r.push(255&a)):r.push(n)}}return r}};var r,e,n,o,i,a=1,u=2,f=4,c=8,g={L:1,M:0,Q:3,H:2},l=0,h=1,s=2,v=3,d=4,w=5,p=6,y=7,B=(r=[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]],e=1335,n=7973,i=function(t){for(var r=0;0!=t;)r+=1,t>>>=1;return r},(o={}).getBCHTypeInfo=function(t){for(var r=t<<10;i(r)-i(e)>=0;)r^=e<<i(r)-i(e);return 21522^(t<<10|r)},o.getBCHTypeNumber=function(t){for(var r=t<<12;i(r)-i(n)>=0;)r^=n<<i(r)-i(n);return t<<12|r},o.getPatternPosition=function(t){return r[t-1]},o.getMaskFunction=function(t){switch(t){case l:return function(t,r){return(t+r)%2==0};case h:return function(t,r){return t%2==0};case s:return function(t,r){return r%3==0};case v:return function(t,r){return(t+r)%3==0};case d:return function(t,r){return(Math.floor(t/2)+Math.floor(r/3))%2==0};case w:return function(t,r){return t*r%2+t*r%3==0};case p:return function(t,r){return(t*r%2+t*r%3)%2==0};case y:return function(t,r){return(t*r%3+(t+r)%2)%2==0};default:throw"bad maskPattern:"+t}},o.getErrorCorrectPolynomial=function(t){for(var r=k([1],0),e=0;e<t;e+=1)r=r.multiply(k([1,C.gexp(e)],0));return r},o.getLengthInBits=function(t,r){if(1<=r&&r<10)switch(t){case a:return 10;case u:return 9;case f:case c:return 8;default:throw"mode:"+t}else if(r<27)switch(t){case a:return 12;case u:return 11;case f:return 16;case c:return 10;default:throw"mode:"+t}else{if(!(r<41))throw"type:"+r;switch(t){case a:return 14;case u:return 13;case f:return 16;case c:return 12;default:throw"mode:"+t}}},o.getLostPoint=function(t){for(var r=t.getModuleCount(),e=0,n=0;n<r;n+=1)for(var o=0;o<r;o+=1){for(var i=0,a=t.isDark(n,o),u=-1;u<=1;u+=1)if(!(n+u<0||r<=n+u))for(var f=-1;f<=1;f+=1)o+f<0||r<=o+f||0==u&&0==f||a==t.isDark(n+u,o+f)&&(i+=1);i>5&&(e+=3+i-5)}for(n=0;n<r-1;n+=1)for(o=0;o<r-1;o+=1){var c=0;t.isDark(n,o)&&(c+=1),t.isDark(n+1,o)&&(c+=1),t.isDark(n,o+1)&&(c+=1),t.isDark(n+1,o+1)&&(c+=1),0!=c&&4!=c||(e+=3)}for(n=0;n<r;n+=1)for(o=0;o<r-6;o+=1)t.isDark(n,o)&&!t.isDark(n,o+1)&&t.isDark(n,o+2)&&t.isDark(n,o+3)&&t.isDark(n,o+4)&&!t.isDark(n,o+5)&&t.isDark(n,o+6)&&(e+=40);for(o=0;o<r;o+=1)for(n=0;n<r-6;n+=1)t.isDark(n,o)&&!t.isDark(n+1,o)&&t.isDark(n+2,o)&&t.isDark(n+3,o)&&t.isDark(n+4,o)&&!t.isDark(n+5,o)&&t.isDark(n+6,o)&&(e+=40);var g=0;for(o=0;o<r;o+=1)for(n=0;n<r;n+=1)t.isDark(n,o)&&(g+=1);return e+=Math.abs(100*g/r/r-50)/5*10},o),C=function(){for(var t=new Array(256),r=new Array(256),e=0;e<8;e+=1)t[e]=1<<e;for(e=8;e<256;e+=1)t[e]=t[e-4]^t[e-5]^t[e-6]^t[e-8];for(e=0;e<255;e+=1)r[t[e]]=e;var n={glog:function(t){if(t<1)throw"glog("+t+")";return r[t]},gexp:function(r){for(;r<0;)r+=255;for(;r>=256;)r-=255;return t[r]}};return n}();function k(t,r){if(void 0===t.length)throw t.length+"/"+r;var e=function(){for(var e=0;e<t.length&&0==t[e];)e+=1;for(var n=new Array(t.length-e+r),o=0;o<t.length-e;o+=1)n[o]=t[o+e];return n}(),n={getAt:function(t){return e[t]},getLength:function(){return e.length},multiply:function(t){for(var r=new Array(n.getLength()+t.getLength()-1),e=0;e<n.getLength();e+=1)for(var o=0;o<t.getLength();o+=1)r[e+o]^=C.gexp(C.glog(n.getAt(e))+C.glog(t.getAt(o)));return k(r,0)},mod:function(t){if(n.getLength()-t.getLength()<0)return n;for(var r=C.glog(n.getAt(0))-C.glog(t.getAt(0)),e=new Array(n.getLength()),o=0;o<n.getLength();o+=1)e[o]=n.getAt(o);for(o=0;o<t.getLength();o+=1)e[o]^=C.gexp(C.glog(t.getAt(o))+r);return k(e,0).mod(t)}};return n}var A=function(){var t=[[1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],[1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],[1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],[2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],[2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],[4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],[4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],[5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12,7,37,13],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],[1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],[3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],[4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],[4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],[8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],[8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],[7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],[13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],[17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],[12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],[17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],[20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]],r=function(t,r){var e={};return e.totalCount=t,e.dataCount=r,e},e={};return e.getRSBlocks=function(e,n){var o=function(r,e){switch(e){case g.L:return t[4*(r-1)+0];case g.M:return t[4*(r-1)+1];case g.Q:return t[4*(r-1)+2];case g.H:return t[4*(r-1)+3];default:return}}(e,n);if(void 0===o)throw"bad rs block @ typeNumber:"+e+"/errorCorrectionLevel:"+n;for(var i=o.length/3,a=[],u=0;u<i;u+=1)for(var f=o[3*u+0],c=o[3*u+1],l=o[3*u+2],h=0;h<f;h+=1)a.push(r(c,l));return a},e}(),b=function(){var t=[],r=0,e={getBuffer:function(){return t},getAt:function(r){var e=Math.floor(r/8);return 1==(t[e]>>>7-r%8&1)},put:function(t,r){for(var n=0;n<r;n+=1)e.putBit(1==(t>>>r-n-1&1))},getLengthInBits:function(){return r},putBit:function(e){var n=Math.floor(r/8);t.length<=n&&t.push(0),e&&(t[n]|=128>>>r%8),r+=1}};return e},M=function(t){var r=a,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+2<r.length;)t.put(o(r.substring(n,n+3)),10),n+=3;n<r.length&&(r.length-n==1?t.put(o(r.substring(n,n+1)),4):r.length-n==2&&t.put(o(r.substring(n,n+2)),7))}},o=function(t){for(var r=0,e=0;e<t.length;e+=1)r=10*r+i(t.charAt(e));return r},i=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);throw"illegal char :"+t};return n},x=function(t){var r=u,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+1<r.length;)t.put(45*o(r.charAt(n))+o(r.charAt(n+1)),11),n+=2;n<r.length&&t.put(o(r.charAt(n)),6)}},o=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);if("A"<=t&&t<="Z")return t.charCodeAt(0)-"A".charCodeAt(0)+10;switch(t){case" ":return 36;case"$":return 37;case"%":return 38;case"*":return 39;case"+":return 40;case"-":return 41;case".":return 42;case"/":return 43;case":":return 44;default:throw"illegal char :"+t}};return n},m=function(r){var e=f,n=t.stringToBytes(r),o={getMode:function(){return e},getLength:function(t){return n.length},write:function(t){for(var r=0;r<n.length;r+=1)t.put(n[r],8)}};return o},L=function(r){var e=c,n=t.stringToBytesFuncs.SJIS;if(!n)throw"sjis not supported.";!function(){var t=n("友");if(2!=t.length||38726!=(t[0]<<8|t[1]))throw"sjis not supported."}();var o=n(r),i={getMode:function(){return e},getLength:function(t){return~~(o.length/2)},write:function(t){for(var r=o,e=0;e+1<r.length;){var n=(255&r[e])<<8|255&r[e+1];if(33088<=n&&n<=40956)n-=33088;else{if(!(57408<=n&&n<=60351))throw"illegal char at "+(e+1)+"/"+n;n-=49472}n=192*(n>>>8&255)+(255&n),t.put(n,13),e+=2}if(e<r.length)throw"illegal char at "+(e+1)}};return i},D=function(){var t=[],r={writeByte:function(r){t.push(255&r)},writeShort:function(t){r.writeByte(t),r.writeByte(t>>>8)},writeBytes:function(t,e,n){e=e||0,n=n||t.length;for(var o=0;o<n;o+=1)r.writeByte(t[o+e])},writeString:function(t){for(var e=0;e<t.length;e+=1)r.writeByte(t.charCodeAt(e))},toByteArray:function(){return t},toString:function(){var r="";r+="[";for(var e=0;e<t.length;e+=1)e>0&&(r+=","),r+=t[e];return r+="]"}};return r},S=function(t){var r=t,e=0,n=0,o=0,i={read:function(){for(;o<8;){if(e>=r.length){if(0==o)return-1;throw"unexpected end of file./"+o}var t=r.charAt(e);if(e+=1,"="==t)return o=0,-1;t.match(/^\s$/)||(n=n<<6|a(t.charCodeAt(0)),o+=6)}var i=n>>>o-8&255;return o-=8,i}},a=function(t){if(65<=t&&t<=90)return t-65;if(97<=t&&t<=122)return t-97+26;if(48<=t&&t<=57)return t-48+52;if(43==t)return 62;if(47==t)return 63;throw"c:"+t};return i},I=function(t,r,e){for(var n=function(t,r){var e=t,n=r,o=new Array(t*r),i={setPixel:function(t,r,n){o[r*e+t]=n},write:function(t){t.writeString("GIF87a"),t.writeShort(e),t.writeShort(n),t.writeByte(128),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(255),t.writeByte(255),t.writeByte(255),t.writeString(","),t.writeShort(0),t.writeShort(0),t.writeShort(e),t.writeShort(n),t.writeByte(0);var r=a(2);t.writeByte(2);for(var o=0;r.length-o>255;)t.writeByte(255),t.writeBytes(r,o,255),o+=255;t.writeByte(r.length-o),t.writeBytes(r,o,r.length-o),t.writeByte(0),t.writeString(";")}},a=function(t){for(var r=1<<t,e=1+(1<<t),n=t+1,i=u(),a=0;a<r;a+=1)i.add(String.fromCharCode(a));i.add(String.fromCharCode(r)),i.add(String.fromCharCode(e));var f,c,g,l=D(),h=(f=l,c=0,g=0,{write:function(t,r){if(t>>>r!=0)throw"length over";for(;c+r>=8;)f.writeByte(255&(t<<c|g)),r-=8-c,t>>>=8-c,g=0,c=0;g|=t<<c,c+=r},flush:function(){c>0&&f.writeByte(g)}});h.write(r,n);var s=0,v=String.fromCharCode(o[s]);for(s+=1;s<o.length;){var d=String.fromCharCode(o[s]);s+=1,i.contains(v+d)?v+=d:(h.write(i.indexOf(v),n),i.size()<4095&&(i.size()==1<<n&&(n+=1),i.add(v+d)),v=d)}return h.write(i.indexOf(v),n),h.write(e,n),h.flush(),l.toByteArray()},u=function(){var t={},r=0,e={add:function(n){if(e.contains(n))throw"dup key:"+n;t[n]=r,r+=1},size:function(){return r},indexOf:function(r){return t[r]},contains:function(r){return void 0!==t[r]}};return e};return i}(t,r),o=0;o<r;o+=1)for(var i=0;i<t;i+=1)n.setPixel(i,o,e(i,o));var a=D();n.write(a);for(var u=function(){var t=0,r=0,e=0,n="",o={},i=function(t){n+=String.fromCharCode(a(63&t))},a=function(t){if(t<0);else{if(t<26)return 65+t;if(t<52)return t-26+97;if(t<62)return t-52+48;if(62==t)return 43;if(63==t)return 47}throw"n:"+t};return o.writeByte=function(n){for(t=t<<8|255&n,r+=8,e+=1;r>=6;)i(t>>>r-6),r-=6},o.flush=function(){if(r>0&&(i(t<<6-r),t=0,r=0),e%3!=0)for(var o=3-e%3,a=0;a<o;a+=1)n+="="},o.toString=function(){return n},o}(),f=a.toByteArray(),c=0;c<f.length;c+=1)u.writeByte(f[c]);return u.flush(),"data:image/gif;base64,"+u};return t}();qrcode.stringToBytesFuncs["UTF-8"]=function(t){return function(t){for(var r=[],e=0;e<t.length;e++){var n=t.charCodeAt(e);n<128?r.push(n):n<2048?r.push(192|n>>6,128|63&n):n<55296||n>=57344?r.push(224|n>>12,128|n>>6&63,128|63&n):(e++,n=65536+((1023&n)<<10|1023&t.charCodeAt(e)),r.push(240|n>>18,128|n>>12&63,128|n>>6&63,128|63&n))}return r}(t)},function(t){"function"==typeof define&&define.amd?define([],t):"object"==typeof exports&&(module.exports=t())}(function(){return qrcode});
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+let wideMap, zoomMap, wideMarker, zoomMarker, zoomStd, zoomPhoto;
+let mapsReady = false;
+
+const DESIGNER_PRESETS = {
+  hoshino: "設計事務所　群馬県知事登録第2030号\n特定建設業許可　群馬県知事（特-2）第9109号\n一級建築士　大臣登録第323491号　星野武由",
+  kitazume: "設計事務所　群馬県知事登録第2030号\n特定建設業許可　群馬県知事（特-2）第9109号\n一級建築士　大臣登録第374701号　北爪　俊之",
+  yamazaki: "設計事務所　群馬県知事登録第2030号\n特定建設業許可　群馬県知事（特-2）第9109号\n二級建築士　群馬県知事登録第12645号　山﨑　恵美",
+  seki: "設計事務所　群馬県知事登録第2030号\n特定建設業許可　群馬県知事（特-7）第9109号\n一級建築士　大臣登録第241426号　関　敏孝"
+};
+
+// ANDPADからコピーしたテキストから、顧客名と住所を取り出して各欄に反映する
+function parseAndpad(text){
+  const lines = text.replace(/\r/g,'').split('\n').map(s => s.trim()).filter(Boolean);
+  let address = '', name = '';
+
+  // 住所：都道府県から始まる部分を探す（郵便番号は除去）
+  const prefRe = /(北海道|東京都|京都府|大阪府|[^\s　]{2,3}県)[^\n]*/;
+  for(const line of lines){
+    const cleaned = line.replace(/^(住所|所在地|現場住所|建設地|施工場所)[\s　:：]*/,'').replace(/〒?\s*\d{3}-?\d{4}[\s　]*/,'');
+    const m = cleaned.match(prefRe);
+    if(m){ address = m[0].replace(/[\s　]+/g,'').replace(/[‐―ー−]/g,'-').replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0)-0xFEE0)); break; }
+  }
+
+  // 顧客名：ラベル付き行を優先、なければ住所・電話・郵便番号以外の最初の行
+  for(const line of lines){
+    const m = line.match(/^(顧客名|お客様名|お客様|施主名|施主|氏名|名前)[\s　:：]*(.+)$/);
+    if(m){ name = m[2]; break; }
+  }
+  if(!name){
+    for(const line of lines){
+      if(prefRe.test(line) || /〒|\d{2,4}-\d{2,4}-\d{3,4}|@|^https?:/.test(line)) continue;
+      name = line; break;
+    }
+  }
+  name = name.replace(/[（(][^）)]*[）)]/g,'')   // ふりがななどの括弧書きを除去
+             .replace(/様$/,'')
+             .replace(/[\s　]+/g,'　')
+             .trim();
+  return {name, address};
+}
+
+function applyAndpad(){
+  const statusEl = document.getElementById('status');
+  const raw = document.getElementById('andpadText').value.trim();
+  if(raw && looksLikePos(raw)){   // 座標やGoogleマップのリンクを貼った場合は、その位置で作る
+    document.getElementById('coordInput').value = raw;
+    document.getElementById('andpadText').value = '';
+    generateMap(); return;
+  }
+  // ANDPADのピン位置（座標）が一緒に貼られていれば取り出す（「36.40, 139.07」形式・緯度/経度の別行・座標入りURL）
+  let pin = null, rest = raw;
+  const mPair = raw.match(/(-?\d{1,3}\.\d{3,})\s*[,，、\s]\s*(-?\d{1,3}\.\d{3,})/);
+  const mLat = raw.match(/緯度[^\d\-]{0,6}(-?\d{1,3}\.\d{3,})/), mLon = raw.match(/経度[^\d\-]{0,6}(-?\d{1,3}\.\d{3,})/);
+  if(mLat && mLon){ pin = mLat[1]+', '+mLon[1]; rest = rest.replace(/^.*(緯度|経度).*$/mg,''); }
+  else if(mPair){ pin = mPair[1]+', '+mPair[2]; rest = rest.split('\n').filter(l=>!l.includes(mPair[0])).join('\n'); }
+  else {
+    const url = (raw.match(/https?:\/\/\S+/)||[])[0];
+    const pp = url && extractGmapPositions(decodeURIComponent(url));
+    if(pp){ const c = pp.pin || pp.center; pin = c.lat+', '+c.lon; rest = rest.replace(url,''); }
+  }
+  if(pin){ const [a,b] = pin.split(',').map(parseFloat); if(!(a>20&&a<46&&b>122&&b<154)) pin = null; }   // 日本の範囲外は使わない
+  const {name, address} = parseAndpad(rest);
+  if(pin && !name && !address){ document.getElementById('coordInput').value = pin; document.getElementById('andpadText').value=''; generateMap(); return; }
+  if(!name && !address){
+    statusEl.textContent = '顧客名・住所を読み取れませんでした。内容を確認してください。';
+    statusEl.className = 'status err';
+    return;
+  }
+  if(address){
+    document.getElementById('address').value = address;
+    document.getElementById('coordInput').value = '';
+    document.getElementById('googleMapsLink').value = '';
+    SITE.poly = [];
+    document.getElementById('addressLabel').value = '申請地：' + address;   // 県名から表示
+  }
+  if(name){
+    document.getElementById('projectName').value = name + '様邸新築工事';
+  }
+  if(pin){ document.getElementById('coordInput').value = pin; SITE.poly = []; }
+  updateDocTitle();
+  statusEl.textContent = '反映しました（顧客名：' + (name || '未検出') + '／住所：' + (address || '未検出') + (pin ? '／ピン位置：' + pin : '') + '）。';
+  statusEl.className = 'status';
+  if(address || pin) generateMap();
+}
+// ---- 工事名＝顧客名＋種別（自由入力のときはそのまま）----
+function buildTitle(){
+  const t=document.getElementById('workType').value, n=document.getElementById('custName').value.trim().replace(/[\s　]*様$/,'');
+  const c=document.getElementById('customTitle');
+  c.hidden = (t!=='custom');
+  document.getElementById('projectName').value = (t==='custom') ? c.value.trim() : (n ? n+t : '');
+  updateDocTitle();
+}
+// 保存ファイルの工事名から、顧客名・種別を復元する（以前の保存ファイルにも対応）
+function splitTitle(title){
+  const m=(title||'').match(/^(.*?)(様邸新築工事|様邸リフォーム工事)$/);
+  document.getElementById('custName').value = m ? m[1] : '';
+  document.getElementById('workType').value = m ? m[2] : (title ? 'custom' : '様邸新築工事');
+  document.getElementById('customTitle').value = m ? '' : (title||'');
+  buildTitle();
+}
+document.addEventListener('DOMContentLoaded', () => {
+  ['custName','customTitle'].forEach(id=>document.getElementById(id).addEventListener('input',buildTitle));
+  document.getElementById('workType').addEventListener('change',()=>{ buildTitle(); if(document.getElementById('workType').value==='custom'){ const c=document.getElementById('customTitle'); if(!c.value){ const n=document.getElementById('custName').value.trim().replace(/[\s　]*様$/,''); if(n) c.value=n+'様邸'; } buildTitle(); c.focus(); } });
+  // 座標欄に貼り付けたら、そのまま地図を作る
+  document.getElementById('coordInput').addEventListener('paste',()=>setTimeout(()=>{ if(document.getElementById('coordInput').value.trim()) generateMap(); },50));
+});
+
+
+function applyColors(){
+  const m=document.getElementById('colorMain').value, a=document.getElementById('colorAccent').value;
+  const r=document.documentElement.style;
+  r.setProperty('--line',m); r.setProperty('--accent',a);
+}
+// A4横(281mm幅)のシートを画面幅に合わせて縮小表示（印刷時は原寸）
+function fitSheet(){
+  const wrap=document.getElementById('sheetWrap'), sh=document.getElementById('sheet');
+  sh.style.transform='none';
+  const sw=sh.offsetWidth, sc=Math.min(1, wrap.clientWidth/sw);
+  sh.style.transform='scale('+sc+')';
+  wrap.style.height=(sh.offsetHeight*sc+2)+'px';
+}
+window.addEventListener('resize', fitSheet);
+window.addEventListener('load', fitSheet);
+window.addEventListener('beforeprint', () => { document.getElementById('sheet').style.transform='none'; });
+window.addEventListener('afterprint', fitSheet);
+
+
+// ================= 建設地（赤い多角形・赤丸・矢印）=================
+const NS='http://www.w3.org/2000/svg';
+const RED='#ee0000';
+const SITE={marks:[], poly:[], lat:36.5, lon:138, busyUntil:0, located:false, label:'建設地', mode:'gsi', wideZ:15, zoomZ:18};
+let ovz=null, ovw=null;
+
+function svgEl(name, attrs){ const e=document.createElementNS(NS,name); for(const k in attrs) e.setAttribute(k,attrs[k]); return e; }
+function mpp(z, lat){ return 156543.03392*Math.cos(lat*Math.PI/180)/Math.pow(2,z); }
+function curZoom(which){
+  if(SITE.mode==='gsi'){ const m=(which==='zoom')?zoomMap:wideMap; return m.getZoom(); }
+  return which==='zoom'?SITE.zoomZ:SITE.wideZ;
+}
+function rectPoly(w,d){ return [[-w/2,d/2],[w/2,d/2],[w/2,-d/2],[-w/2,-d/2]]; }
+function resetLot(){
+  const w=parseFloat(document.getElementById('lotW').value)||18, d=parseFloat(document.getElementById('lotD').value)||15;
+  SITE.poly=rectPoly(w,d);
+  if(ovz) buildZoomOverlay();
+}
+function addVertex(){
+  if(SITE.poly.length<3) return;
+  let best=0,bl=-1;
+  for(let i=0;i<SITE.poly.length;i++){ const a=SITE.poly[i], b=SITE.poly[(i+1)%SITE.poly.length]; const l=Math.hypot(a[0]-b[0],a[1]-b[1]); if(l>bl){bl=l;best=i;} }
+  const a=SITE.poly[best], b=SITE.poly[(best+1)%SITE.poly.length];
+  SITE.poly.splice(best+1,0,[(a[0]+b[0])/2,(a[1]+b[1])/2]);
+  if(ovz) buildZoomOverlay();
+}
+function removeVertex(i){ if(SITE.poly.length>3){ SITE.poly.splice(i,1); buildZoomOverlay(); } }
+
+
+// ---- 右クリックメニュー ----
+function hideCtx(){ const m=document.getElementById('ctxMenu'); if(m) m.style.display='none'; }
+function showCtx(x,y,items){
+  let m=document.getElementById('ctxMenu');
+  if(!m){ m=document.createElement('div'); m.id='ctxMenu';
+    m.style.cssText='position:fixed;z-index:10000;background:#fff;border:1px solid #bbb;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.25);padding:4px;font:13px "Noto Sans JP",sans-serif;color:#222;';
+    document.body.appendChild(m); }
+  m.innerHTML='';
+  items.forEach(it=>{
+    const b=document.createElement('div'); b.textContent=it.label;
+    b.style.cssText='padding:6px 14px;border-radius:4px;white-space:nowrap;'+(it.disabled?'color:#aaa;':'cursor:pointer;');
+    if(!it.disabled){ b.onmouseenter=()=>b.style.background='#f1ece4'; b.onmouseleave=()=>b.style.background=''; b.onclick=()=>{ hideCtx(); it.action(); }; }
+    m.appendChild(b);
+  });
+  m.style.left=Math.min(x,window.innerWidth-190)+'px'; m.style.top=Math.min(y,window.innerHeight-60)+'px'; m.style.display='block'; ctxScrollY=window.scrollY;
+}
+document.addEventListener('click',hideCtx);
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') hideCtx(); });
+let ctxScrollY=0;
+window.addEventListener('scroll',()=>{ if(Math.abs(window.scrollY-ctxScrollY)>4) hideCtx(); });
+
+function svgPointFromEvent(e){
+  const pt=ovz.svg.createSVGPoint(); pt.x=e.clientX; pt.y=e.clientY;
+  return pt.matrixTransform(ovz.svg.getScreenCTM().inverse());
+}
+// 多角形の辺のうち、クリック位置に最も近い辺の上の点に頂点を追加する
+function nearestEdge(p, pts){
+  let best=-1,bd=1e9,bq=null;
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i], b=pts[(i+1)%pts.length]; const dx=b[0]-a[0], dy=b[1]-a[1], l2=(dx*dx+dy*dy)||1;
+    const t=Math.max(0,Math.min(1,((p.x-a[0])*dx+(p.y-a[1])*dy)/l2)); const q=[a[0]+t*dx,a[1]+t*dy];
+    const d=Math.hypot(p.x-q[0],p.y-q[1]); if(d<bd){bd=d;best=i;bq=q;}
+  }
+  return {i:best,d:bd,q:bq};
+}
+function insidePoly(p, pts){
+  let c=false;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+    if(((pts[i][1]>p.y)!==(pts[j][1]>p.y)) && (p.x < (pts[j][0]-pts[i][0])*(p.y-pts[i][1])/(pts[j][1]-pts[i][1])+pts[i][0])) c=!c;
+  }
+  return c;
+}
+function addVertexAtPoint(p){
+  const pts=zoomPts(), ne=nearestEdge(p,pts), m=mpp(curZoom('zoom'),SITE.lat);
+  SITE.poly.splice(ne.i+1,0,[(ne.q[0]-ovz.W/2)*m,(ovz.H/2-ne.q[1])*m]);
+  buildZoomOverlay();
+}
+function onZoomContext(e){
+  if(!ovz) return;
+  const p=svgPointFromEvent(e), pts=zoomPts();
+  if(insidePoly(p,pts) || nearestEdge(p,pts).d<16){
+    e.preventDefault(); e.stopPropagation();
+    showCtx(e.clientX,e.clientY,[{label:'ここに頂点を追加',action:()=>addVertexAtPoint(p)}]);
+  }
+}
+// 目的地マーク（ピン）。多角形より上に描く。先端が建設地の位置
+function pinSvg(x,y){
+  const g=svgEl('g',{transform:'translate('+x+','+y+')'});
+  g.appendChild(svgEl('path',{d:'M0,0 C-3,-9 -13.5,-16 -13.5,-27 A13.5,13.5 0 1 1 13.5,-27 C13.5,-16 3,-9 0,0 Z',fill:'#ea4335',stroke:'#b31412','stroke-width':1}));
+  g.appendChild(svgEl('circle',{cx:0,cy:-27,r:5.2,fill:'#b31412'}));
+  return g;
+}
+
+
+// Googleマップ埋め込みには縮尺バーが出ないため、元の案内図と同様に右下へスケールバーを描く
+function addScaleBar(svg,W,H,z){
+  const m=mpp(z,SITE.lat), maxPx=W*0.24;
+  const nice=[5,10,20,25,30,50,100,200,250,300,500,1000,2000];
+  let len=nice[0]; for(const n of nice){ if(n/m<=maxPx) len=n; }
+  const px=len/m, x0=W-14-px, y0=H-36;
+  const g=svgEl('g',{});
+  g.appendChild(svgEl('rect',{x:x0-6,y:y0-17,width:px+12,height:26,fill:'#fff','fill-opacity':0.8}));
+  g.appendChild(svgEl('path',{d:'M'+x0+','+(y0-4)+' L'+x0+','+y0+' L'+(x0+px)+','+y0+' L'+(x0+px)+','+(y0-4),fill:'none',stroke:'#222','stroke-width':1.4}));
+  const t=svgEl('text',{x:x0,y:y0-7,'font-size':11,fill:'#222','font-family':'"Noto Sans JP",sans-serif'});
+  t.textContent=(len>=1000?(len/1000)+' km':len+' m'); g.appendChild(t);
+  svg.appendChild(g);
+}
+
+function newOverlaySvg(el){
+  el.querySelectorAll('.ov').forEach(n=>n.remove());
+  const W=el.clientWidth, H=el.clientHeight;
+  const svg=svgEl('svg',{class:'ov',width:W,height:H,viewBox:'0 0 '+W+' '+H});
+  svg.style.cssText='position:absolute;left:0;top:0;z-index:700;pointer-events:none;';
+  el.appendChild(svg);
+  return {svg,W,H};
+}
+
+function buildWideOverlay(){
+  const el=document.getElementById('wideMap'); const {svg,W,H}=newOverlaySvg(el);
+  const r=0.148*W;
+  svg.appendChild(svgEl('circle',{cx:W/2,cy:H/2,r:r,fill:'none',stroke:RED,'stroke-width':2.6}));
+  if(SITE.mode==='gsi') svg.appendChild(pinSvg(W/2,H/2));
+  if(SITE.mode==='google') addScaleBar(svg,W,H,SITE.wideZ);
+  ovw={svg,W,H,r};
+  drawLinks();
+}
+
+function buildZoomOverlay(){
+  const el=document.getElementById('zoomMap'); const {svg,W,H}=newOverlaySvg(el);
+  const poly=svgEl('polygon',{fill:RED,'fill-opacity':0.8,stroke:RED,'stroke-width':2,'stroke-linejoin':'round'});
+  poly.style.pointerEvents='all'; poly.style.cursor='move';
+  ['mousedown','touchstart','click','dblclick'].forEach(t=>poly.addEventListener(t,e=>e.stopPropagation()));
+  poly.addEventListener('pointerdown',startMovePoly);
+  svg.appendChild(poly);
+  svg.appendChild(pinSvg(W/2,H/2));
+  const stem=svgEl('line',{class:'vtx',stroke:RED,'stroke-width':1.5,'stroke-dasharray':'3 2'});
+  const rot=svgEl('circle',{class:'vtx',r:7,fill:RED,stroke:'#fff','stroke-width':2});
+  const rotT=svgEl('title',{}); rotT.textContent='ドラッグで回転（Shiftで15°ずつ）'; rot.appendChild(rotT);
+  rot.style.pointerEvents='all'; rot.style.cursor='grab';
+  ['mousedown','touchstart','click','dblclick'].forEach(t=>rot.addEventListener(t,e=>e.stopPropagation()));
+  rot.addEventListener('pointerdown',startRotate);
+  svg.appendChild(stem); svg.appendChild(rot);
+  if(SITE.mode==='google') addScaleBar(svg,W,H,SITE.zoomZ);
+  const labG=svgEl('g',{}); const labR=svgEl('rect',{fill:'#fff',stroke:'#999','stroke-width':0.6,height:22});
+  const labT=svgEl('text',{'text-anchor':'middle','font-size':13,fill:'#000','font-family':'"小塚ゴシック Pro R","Kozuka Gothic Pro R","Noto Sans JP",sans-serif'});
+  labT.textContent=SITE.label; labG.appendChild(labR); labG.appendChild(labT); svg.appendChild(labG);
+  // 辺：ドラッグで平行移動（隣の辺の向きはそのまま）
+  const edges=SITE.poly.map((v,i)=>{
+    const ln=svgEl('line',{class:'vtx edge',stroke:'#000','stroke-opacity':0,'stroke-width':12,'stroke-linecap':'round'});
+    const t=svgEl('title',{}); t.textContent='ドラッグでこの辺を平行移動（0.1m単位）'; ln.appendChild(t);
+    ln.style.pointerEvents='stroke'; ln.style.cursor='move';
+    ['mousedown','touchstart','click','dblclick'].forEach(ev=>ln.addEventListener(ev,e=>e.stopPropagation()));
+    ln.addEventListener('pointerdown',e=>startEdgeDrag(e,i));
+    svg.appendChild(ln); return ln;
+  });
+  const handles=SITE.poly.map((v,i)=>{
+    const c=svgEl('circle',{r:6,fill:'#fff',stroke:RED,'stroke-width':2,class:'vtx'});
+    c.style.pointerEvents='all'; c.style.cursor='move';
+    ['mousedown','touchstart','click','dblclick'].forEach(t=>c.addEventListener(t,e=>e.stopPropagation()));
+    c.addEventListener('pointerdown',e=>startDrag(e,i,c));
+    c.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();showCtx(e.clientX,e.clientY,[{label:'この頂点を削除',disabled:SITE.poly.length<=3,action:()=>removeVertex(i)}]);});
+    svg.appendChild(c); return c;
+  });
+  ovz={svg,W,H,poly,labR,labT,handles,rot,stem,edges};
+  if(!el._ctxBound){ el.addEventListener('contextmenu',onZoomContext); el._ctxBound=true; }
+  updateZoomShapes();
+}
+
+function zoomPts(){
+  const m=mpp(curZoom('zoom'),SITE.lat);
+  return SITE.poly.map(([dx,dy])=>[ovz.W/2+dx/m, ovz.H/2-dy/m]);
+}
+function updateZoomShapes(){
+  if(!ovz) return;
+  const {W,H}=ovz, pts=zoomPts();
+  ovz.poly.setAttribute('points',pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' '));
+  ovz.handles.forEach((c,i)=>{ c.setAttribute('cx',pts[i][0]); c.setAttribute('cy',pts[i][1]); });
+  (ovz.edges||[]).forEach((ln,i)=>{ const a=pts[i], b=pts[(i+1)%pts.length]; ln.setAttribute('x1',a[0]); ln.setAttribute('y1',a[1]); ln.setAttribute('x2',b[0]); ln.setAttribute('y2',b[1]); });
+  if(ovz.rot && pts.length){
+    const mx=Math.max(...pts.map(p=>p[0])), cyy=pts.reduce((a,p)=>a+p[1],0)/pts.length;
+    const rx=Math.min(W-10,mx+22);
+    ovz.stem.setAttribute('x1',mx); ovz.stem.setAttribute('y1',cyy); ovz.stem.setAttribute('x2',rx); ovz.stem.setAttribute('y2',cyy);
+    ovz.rot.setAttribute('cx',rx); ovz.rot.setAttribute('cy',cyy);
+  }
+  const lw=Math.max(56,SITE.label.length*14+18), lh=22;
+  const minY=Math.min(...pts.map(p=>p[1])), maxY=Math.max(...pts.map(p=>p[1]));
+  const cxp=pts.reduce((a,p)=>a+p[0],0)/pts.length;
+  let ly=Math.min(minY,H/2-41)-lh-6; if(ly<2) ly=Math.min(H-lh-2,maxY+9);
+  const lx=Math.max(2,Math.min(W-lw-2,cxp-lw/2));
+  ovz.labR.setAttribute('x',lx); ovz.labR.setAttribute('y',ly); ovz.labR.setAttribute('width',lw);
+  ovz.labT.setAttribute('x',lx+lw/2); ovz.labT.setAttribute('y',ly+16);
+  drawLinks();
+}
+function startDrag(e,i,c){
+  e.preventDefault(); e.stopPropagation();
+  try{ c.setPointerCapture(e.pointerId); }catch(_){}
+  const move=ev=>{
+    const pt=ovz.svg.createSVGPoint(); pt.x=ev.clientX; pt.y=ev.clientY;
+    const p=pt.matrixTransform(ovz.svg.getScreenCTM().inverse());
+    const m=mpp(curZoom('zoom'),SITE.lat);
+    SITE.poly[i]=[(p.x-ovz.W/2)*m,(ovz.H/2-p.y)*m];
+    updateZoomShapes();
+  };
+  const up=()=>{ c.removeEventListener('pointermove',move); c.removeEventListener('pointerup',up); };
+  c.addEventListener('pointermove',move); c.addEventListener('pointerup',up);
+}
+
+// 広域図の赤丸 → 拡大図の赤い敷地 へ矢印を引き、間に「拡大」を表示（元のWordと同じ構成）
+function drawLinks(){
+  const sv=document.getElementById('links'); if(!sv) return;
+  sv.innerHTML='';
+  if(!ovw || !ovz) return;
+  const maps=document.querySelector('#sheet .maps');
+  sv.setAttribute('width',maps.clientWidth); sv.setAttribute('height',maps.clientHeight);
+  const wEl=document.getElementById('wideMap'), zEl=document.getElementById('zoomMap');
+  const wb=wEl.parentElement, zb=zEl.parentElement;
+  const cy=wb.offsetTop+wEl.offsetTop+wEl.clientHeight/2;
+  const x1=wb.offsetLeft+wEl.offsetLeft+wEl.clientWidth/2+ovw.r;
+  const pts=zoomPts(); const ly=ovz.H/2;
+  let xs=[];
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i], b=pts[(i+1)%pts.length];
+    if((a[1]-ly)*(b[1]-ly)<0){ xs.push(a[0]+(ly-a[1])*(b[0]-a[0])/(b[1]-a[1])); }
+  }
+  const minX=xs.length?Math.min(...xs):Math.min(...pts.map(p=>p[0]));
+  const x2=zb.offsetLeft+zEl.offsetLeft+minX-3;
+  if(x2<=x1+8) return;
+  const defs=svgEl('defs',{}); const mk=svgEl('marker',{id:'arw',markerWidth:9,markerHeight:9,refX:8,refY:4.5,orient:'auto',markerUnits:'userSpaceOnUse'});
+  mk.appendChild(svgEl('path',{d:'M0,0 L9,4.5 L0,9 Z',fill:RED})); defs.appendChild(mk); sv.appendChild(defs);
+  sv.appendChild(svgEl('line',{x1:x1,y1:cy,x2:x2,y2:cy,stroke:RED,'stroke-width':2,'marker-end':'url(#arw)'}));
+  const gx=(wb.offsetLeft+wb.offsetWidth+zb.offsetLeft)/2, lw=44, lh=24;
+  sv.appendChild(svgEl('rect',{x:gx-lw/2,y:cy-lh/2,width:lw,height:lh,fill:'#fff',stroke:'#999','stroke-width':0.6}));
+  const t=svgEl('text',{x:gx,y:cy+5,'text-anchor':'middle','font-size':14,fill:'#000','font-family':'"小塚ゴシック Pro R","Kozuka Gothic Pro R","Noto Sans JP",sans-serif'});
+  t.textContent='拡大'; sv.appendChild(t);
+}
+
+// 位置を決めて（地理院モード）2枚の地図を同じ地点に合わせ、赤い図形を描く
+function placeSite(lat, lon){
+  SITE.lat=lat; SITE.lon=lon; SITE.mode='gsi'; SITE.busyUntil=Date.now()+500;
+  const ww=document.getElementById('wideMap').clientWidth||413, cw=document.getElementById('zoomMap').clientWidth||413;
+  const wz=scaleToZoom(parseFloat(document.getElementById('wideScale').value)||200,lat,19,ww);
+  const cz=scaleToZoom(parseFloat(document.getElementById('zoomScale').value)||30,lat,19,cw);
+  wideMap.setView([lat,lon],wz,{animate:false}); zoomMap.setView([lat,lon],cz,{animate:false});
+  if(!SITE.poly.length) resetLot();
+  buildWideOverlay(); buildZoomOverlay();
+  renderMarks();
+}
+
+
+// PDF保存時のファイル名（ブラウザは<title>を初期のファイル名にする）：「作成日_案内図_お客様名」
+function buildFileBaseName(){
+  const d=new Date(), pad=n=>String(n).padStart(2,'0');
+  const ymd=d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());
+  const proj=(document.getElementById('projectName').value||'').trim();
+  const m=proj.match(/^(.*?様)/);
+  let name=(m?m[1]:proj).replace(/[\s　]+/g,'').replace(/[\\\/:*?"<>|]/g,'');
+  return ymd+'_案内図'+(name?'_'+name:'');
+}
+function updateDocTitle(){
+  const base=buildFileBaseName();
+  document.title=base;
+  const h=document.getElementById('fileNameHint');
+  if(h) h.textContent='PDF保存時のファイル名：'+base+'.pdf（保存画面で自動入力されます）';
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  updateDocTitle();
+});
+window.addEventListener('beforeprint',updateDocTitle);
+
+
+// 住所をGoogleマップの検索結果で開く（新しいタブ）
+function openGoogleMaps(){
+  const statusEl=document.getElementById('status');
+  const addr=document.getElementById('address').value.trim();
+  if(!addr){ statusEl.textContent='住所が空です。ANDPADの内容を貼り付けるか、住所を入力してください。'; statusEl.className='status err'; return; }
+  window.open('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(addr),'_blank','noopener');
+  statusEl.textContent='Googleマップを開きました。建設地を右クリック→先頭の座標をクリックしてコピーし、このページに戻って空いている所で Ctrl+V を押してください。';
+  statusEl.className='status';
+}
+// クリップボードの座標・リンクをリンク欄に入れて、そのまま地図を生成
+async function pasteFromClipboard(){
+  const statusEl=document.getElementById('status');
+  try{
+    const t=(await navigator.clipboard.readText()).trim();
+    if(!t) throw new Error('empty');
+    document.getElementById('coordInput').value=t;
+    generateMap();
+  }catch(e){
+    statusEl.textContent='クリップボードを読み取れませんでした（ブラウザの許可が必要です）。ページの空いている所をクリックしてから Ctrl+V を押してください。';
+    statusEl.className='status err';
+    document.getElementById('coordInput').focus();
+  }
+}
+
+
+// ---- 生成した地図上での縮尺変更（スクロール／＋－）----
+function niceRound(v){ const mag=Math.pow(10,Math.floor(Math.log10(v))-1); return Math.round(v/mag)*mag; }
+// いま表示中の縮尺（スケールバーの長さ）を、縮尺入力欄に反映する
+function syncScaleInputs(){
+  if(Date.now()<SITE.busyUntil) return;
+  const ww=document.getElementById('wideMap').clientWidth||413, cw=document.getElementById('zoomMap').clientWidth||413;
+  document.getElementById('wideScale').value=niceRound(actualScale(curZoom('wide'),SITE.lat,ww));
+  document.getElementById('zoomScale').value=niceRound(actualScale(curZoom('zoom'),SITE.lat,cw));
+}
+function gEmbedSrc(lat,lon,z,photo){
+  const key=(document.getElementById('gKey').value||'').trim();
+  const ll=(+lat).toFixed(7)+','+(+lon).toFixed(7);
+  // APIキーあり：Google公式の埋め込み（中心と拡大率を確実に指定できる）
+  if(key) return 'https://www.google.com/maps/embed/v1/view?key='+encodeURIComponent(key)+'&center='+ll+'&zoom='+z+'&language=ja&region=JP&maptype='+(photo?'satellite':'roadmap');
+  // キーなし：非公式の方式。中心(ll)も明示する
+  return 'https://maps.google.com/maps?ll='+ll+'&q='+ll+'&z='+z+'&hl=ja'+(photo?'&t=k':'&t=m')+'&output=embed';
+}
+// Googleの埋め込みは、2枚を同時に読み込むと片方が世界地図になることがある（キーなしの方式で起きやすい）。
+// そのため、広域図の読み込みが終わってから拡大図を読み込む。iframeは毎回作り直す。
+let gSeq=0;
+function gFrame(which, src){
+  const box=document.querySelector('#'+(which==='zoom'?'zoomMap':'wideMap')+' .gwrap'); if(!box) return null;
+  const f=document.createElement('iframe');
+  f.setAttribute('loading','eager'); f.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
+  f.src=src; box.innerHTML=''; box.appendChild(f);
+  return f;
+}
+function gLoad(which){
+  const z=which==='zoom'?SITE.zoomZ:SITE.wideZ;
+  return gFrame(which, gEmbedSrc(SITE.lat,SITE.lon,z,which==='zoom'&&!!SITE.photo));
+}
+function gLoadBoth(){
+  const my=++gSeq;
+  const w=gLoad('wide'); if(!w) return;
+  let done=false;
+  const next=()=>{ if(done||my!==gSeq) return; done=true; setTimeout(()=>{ if(my===gSeq) gLoad('zoom'); },400); };
+  w.addEventListener('load',next); setTimeout(next,5000);
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  const k=document.getElementById('gKey');
+  try{ k.value=localStorage.getItem('gEmbedKey')||''; }catch(e){}
+  k.addEventListener('change',()=>{ try{ localStorage.setItem('gEmbedKey',k.value.trim()); }catch(e){} });
+});
+function googleZoom(which,delta){
+  if(SITE.mode!=='google') return;
+  const key=(which==='zoom')?'zoomZ':'wideZ', nz=Math.max(3,Math.min(21,SITE[key]+delta));
+  if(nz===SITE[key]) return;
+  SITE[key]=nz;
+  const el=document.getElementById(which==='zoom'?'zoomMap':'wideMap'), f=el.querySelector('iframe');
+  if(f) gLoad(which);
+  if(which==='zoom') buildZoomOverlay(); else buildWideOverlay();
+  syncScaleInputs();
+}
+// Googleマップ表示：地図の上でマウスホイールを回すと拡大・縮小（1段階ずつ）
+function bindGoogleWheel(el,which){
+  if(el._wheelBound) return; el._wheelBound=true;
+  let acc=0, lock=0;
+  el.addEventListener('wheel',(e)=>{
+    if(SITE.mode!=='google') return;
+    e.preventDefault();
+    if(Date.now()<lock) return;
+    acc+=e.deltaY;
+    if(Math.abs(acc)>=60){ googleZoom(which, acc<0?1:-1); acc=0; lock=Date.now()+280; }
+  },{passive:false});
+}
+
+
+
+// ================= 目印（学校・駅・コンビニ・道路名など）=================
+const LM_COLORS={school:'#1e6fd9',station:'#8a3fc7',shop:'#2a9d4a',public:'#d9302c',hospital:'#e0589a',manual:'#ee7800'};
+let lmLayers={wide:null,zoom:null}, addMode=false;
+function updateCredit(){
+  const el=document.getElementById('outCredit');
+  if(SITE.mode==='google'){ el.textContent='地図データ：© Google'; return; }
+  const osm=SITE.marks.some(m=>m.kind!=='manual');
+  el.textContent='地図データ：地理院タイル（国土地理院）'+(SITE.photo?'・全国最新写真（シームレス）':'')+(osm?'　目印：© OpenStreetMap contributors':'');
+}
+function lmEsc(t){ return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function renderMarks(){
+  if(!mapsReady) return;
+  [['wide',wideMap],['zoom',zoomMap]].forEach(([k,map])=>{
+    if(lmLayers[k]) lmLayers[k].remove();
+    lmLayers[k]=L.layerGroup().addTo(map);
+    SITE.marks.forEach((m,i)=>{
+      const road=m.kind==='road';
+      const dot=road?'':'<span class="lmd" style="background:'+(LM_COLORS[m.kind]||LM_COLORS.manual)+'"></span>';
+      const icon=L.divIcon({className:'lm'+(road?' road':''),html:'<div class="lmt">'+dot+lmEsc(m.name)+'</div>',iconSize:[0,0]});
+      const mk=L.marker([m.lat,m.lon],{icon,keyboard:false,zIndexOffset:500,draggable:true}).addTo(lmLayers[k]);
+      mk.on('dragend',()=>{ const ll=mk.getLatLng(); m.lat=ll.lat; m.lon=ll.lng; renderMarks(); });
+      mk.on('dblclick',e=>{ L.DomEvent.stopPropagation(e); const n=prompt('目印の名前',m.name); if(n&&n.trim()){ m.name=n.trim(); renderMarks(); } });
+      mk.on('contextmenu',e=>{
+        L.DomEvent.stopPropagation(e); if(e.originalEvent) e.originalEvent.preventDefault();
+        const ev=e.originalEvent||{clientX:0,clientY:0};
+        showCtx(ev.clientX,ev.clientY,[
+          {label:'名前を変更',action:()=>{ const n=prompt('目印の名前',m.name); if(n&&n.trim()){ m.name=n.trim(); renderMarks(); } }},
+          {label:'この目印を削除',action:()=>{ SITE.marks.splice(SITE.marks.indexOf(m),1); renderMarks(); updateCredit(); }}
+        ]);
+      });
+    });
+  });
+  updateCredit();
+}
+function lmStatus(t,err){ const e=document.getElementById('lmStatus'); e.textContent=t; e.className='help'+(err?' err':''); }
+function clearMarks(){ SITE.marks=[]; renderMarks(); lmStatus('目印をすべて消しました。'); }
+
+function toggleAddMark(){
+  if(!mapsReady){ lmStatus('先に「地図を作成」を押してください。',true); return; }
+  addMode=!addMode;
+  document.body.classList.toggle('addmode',addMode);
+  document.getElementById('lmAddBtn').textContent=addMode?'追加をやめる':'手で追加';
+  lmStatus(addMode?'目印にしたい場所を地図（左右どちらでも）でクリックしてください。':'手での追加を終了しました。');
+}
+// 地図クリック：目印の追加中は目印を追加し、そうでなければ建設地の位置を合わせ直す
+function mapClick(e){
+  if(addMode){
+    const n=prompt('目印の名前（例：○○小学校、○○交差点）'); if(!n||!n.trim()) return;
+    SITE.marks.push({lat:e.latlng.lat,lon:e.latlng.lng,name:n.trim(),kind:'manual'}); renderMarks();
+    return;
+  }
+  placeSite(e.latlng.lat,e.latlng.lng); SITE.located=true; updateQr(); rememberPos();
+}
+
+// OpenStreetMap(Overpass)から、広域図の範囲にある目印を取得する
+async function autoLandmarks(){
+  if(!mapsReady||!SITE.located){ lmStatus('先に「地図を作成」を押してください。',true); return; }
+  const cats=[...document.querySelectorAll('.lmCat:checked')].map(c=>c.value);
+  if(!cats.length){ lmStatus('載せる目印の種類を選んでください。',true); return; }
+  const b=wideMap.getBounds(), bb=[b.getSouth(),b.getWest(),b.getNorth(),b.getEast()].map(v=>v.toFixed(6)).join(',');
+  const q={
+    school:'nwr["amenity"="school"]["name"]('+bb+');',
+    station:'nwr["railway"="station"]["name"]('+bb+');nwr["public_transport"="station"]["name"]('+bb+');',
+    shop:'nwr["shop"~"^(convenience|supermarket)$"]["name"]('+bb+');',
+    public:'nwr["amenity"~"^(post_office|townhall|police|fire_station)$"]["name"]('+bb+');',
+    hospital:'nwr["amenity"="hospital"]["name"]('+bb+');',
+    road:'way["highway"~"^(trunk|primary|secondary|tertiary)$"]["name"]('+bb+');'
+  };
+  const query='[out:json][timeout:25];('+cats.map(c=>q[c]).join('')+');out center tags 400;';
+  const btn=document.getElementById('lmAutoBtn'); btn.disabled=true; lmStatus('周辺の目印を探しています…（数秒かかります）');
+  try{
+    // 混んでいるときは別のサーバーで再試行する
+    const EPS=['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+    let data=null, lastErr=null;
+    for(const ep of EPS){
+      try{
+        const ctl=new AbortController(), tm=setTimeout(()=>ctl.abort(),20000);
+        const res=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(query),headers:{'Content-Type':'application/x-www-form-urlencoded'},signal:ctl.signal});
+        clearTimeout(tm);
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        data=await res.json(); break;
+      }catch(err){ lastErr=err; }
+    }
+    if(!data) throw new Error(lastErr&&lastErr.name==='AbortError'?'応答がありませんでした':(lastErr?lastErr.message:'取得失敗'));
+    const kindOf=t=>{
+      if(t.amenity==='school') return 'school';
+      if(t.railway==='station'||t.public_transport==='station') return 'station';
+      if(t.shop) return 'shop';
+      if(t.amenity==='hospital') return 'hospital';
+      if(t.amenity) return 'public';
+      if(t.highway) return 'road';
+      return null;
+    };
+    const cap={school:6,station:3,shop:6,public:4,hospital:3,road:6};
+    const prio=['school','station','public','hospital','shop','road'];
+    const seen=new Set(), cand=[];
+    (data.elements||[]).forEach(el=>{
+      const t=el.tags||{}, kind=kindOf(t); if(!kind||!t.name) return;
+      const lat=el.lat??(el.center&&el.center.lat), lon=el.lon??(el.center&&el.center.lon); if(lat==null) return;
+      const key=kind+'|'+t.name; if(seen.has(key)) return; seen.add(key);
+      // 敷地に近いものを優先
+      const d=Math.hypot(lat-SITE.lat,(lon-SITE.lon)*Math.cos(SITE.lat*Math.PI/180));
+      cand.push({lat,lon,name:t.name,kind,d});
+    });
+    // 学校は「小学校」を先に（案内の目標になりやすい）
+    cand.sort((a,b)=>(prio.indexOf(a.kind)-prio.indexOf(b.kind))||((/小学校/.test(b.name)?1:0)-(/小学校/.test(a.name)?1:0))||(a.d-b.d));
+    const keep=SITE.marks.filter(m=>m.kind==='manual'), placed=[], cnt={};
+    const pts=keep.map(m=>wideMap.latLngToContainerPoint([m.lat,m.lon]));
+    cand.forEach(c=>{
+      if((cnt[c.kind]||0)>=cap[c.kind]) return;
+      const p=wideMap.latLngToContainerPoint([c.lat,c.lon]), size=wideMap.getSize();
+      if(p.x<30||p.y<14||p.x>size.x-30||p.y>size.y-14) return;           // 地図の縁は避ける
+      const w=c.name.length*11+14;
+      if(pts.some(q=>Math.abs(q.x-p.x)<(w+q.w)/2+4&&Math.abs(q.y-p.y)<16)) return;   // 重なる文字は載せない
+      if(Math.abs(p.x-size.x/2)<w/2+10&&Math.abs(p.y-size.y/2)<26) return;            // 建設地のピンと重なる文字は載せない
+      p.w=w; pts.push(p); cnt[c.kind]=(cnt[c.kind]||0)+1; placed.push({lat:c.lat,lon:c.lon,name:c.name,kind:c.kind});
+    });
+    SITE.marks=keep.concat(placed); renderMarks();
+    lmStatus(placed.length?('目印を'+placed.length+'件載せました。ドラッグで位置をずらせます（ダブルクリックで名前変更、右クリックで削除）。足りないものは「手で追加」で補えます。'):'この範囲では該当する目印が見つかりませんでした。「手で追加」をお試しください。');
+  }catch(e){
+    lmStatus('目印を取得できませんでした（'+e.message+'）。時間をおいて再度お試しいただくか、「手で追加」をお使いください。',true);
+  }finally{ btn.disabled=false; }
+}
+
+// ================= Googleマップ用QRコード／リンク =================
+function siteCenter(){
+  if(SITE.mode==='gsi' && mapsReady && zoomMap){ const c=zoomMap.getCenter(); return {lat:c.lat, lon:c.lng}; }
+  return {lat:SITE.lat, lon:SITE.lon};
+}
+function mapsUrl(c){ return 'https://www.google.com/maps/search/?api=1&query='+c.lat.toFixed(7)+','+c.lon.toFixed(7); }
+function updateQr(){
+  const wrap=document.getElementById('outGmapWrap'); if(!wrap || !SITE.located) return;
+  const url=mapsUrl(siteCenter());
+  try{ const qr=qrcode(0,'M'); qr.addData(url); qr.make(); document.getElementById('outQrLink').innerHTML=qr.createSvgTag(4,0); }catch(e){}
+  document.getElementById('outQrLink').href=url; document.getElementById('outGmapLink').href=url;
+  wrap.style.visibility='visible';
+}
+window.addEventListener('beforeprint',updateQr);
+
+// ================= お客様ごとの案件ファイル（保存・読み込み）=================
+const PROJECT_FIELDS=['custName','workType','customTitle','address','addressLabel','coordInput','googleMapsLink','gmapPref','projectName','markerLabel','wideScale','zoomScale','mapSource','lotW','lotD','companyInfo','designerSelect','designerInfo','colorMain','colorAccent'];
+function saveProject(){
+  const statusEl=document.getElementById('status');
+  const data={app:'案内図作成ツール', version:1, savedAt:new Date().toISOString(), fields:{}, site:{poly:SITE.poly, marks:SITE.marks}};
+  PROJECT_FIELDS.forEach(id=>{ data.fields[id]=document.getElementById(id).value; });
+  if(SITE.located){ const c=siteCenter(); data.fields.coordInput=c.lat.toFixed(7)+', '+c.lon.toFixed(7); }   // 位置は座標で確実に復元する
+  const name=buildFileBaseName()+'.json';
+  const blob=new Blob([JSON.stringify(data,null,1)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  const ss=document.getElementById('saveStatus'); ss.textContent='案件ファイルを保存しました：'+name+'（「案件ファイルを開く」で同じ状態から編集できます）'; ss.className='help';
+}
+function loadProject(file){
+  const statusEl=document.getElementById('status'); if(!file) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const data=JSON.parse(r.result);
+      if(!data || data.app!=='案内図作成ツール' || !data.fields) throw new Error('案件ファイルではありません');
+      PROJECT_FIELDS.forEach(id=>{ const el=document.getElementById(id); if(el && data.fields[id]!==undefined) el.value=data.fields[id]; });
+      const gl=document.getElementById('googleMapsLink'), ci=document.getElementById('coordInput');
+      if(gl.value && !ci.value) ci.value=gl.value;
+      gl.value='';
+      if(!data.fields.custName && !data.fields.customTitle) splitTitle(data.fields.projectName); else buildTitle();
+      SITE.poly=(data.site && Array.isArray(data.site.poly)) ? data.site.poly : [];
+      SITE.marks=(data.site && Array.isArray(data.site.marks)) ? data.site.marks : [];
+      applyColors(); updateDocTitle();
+      statusEl.textContent='案件ファイルを読み込みました。地図を作り直しています…'; statusEl.className='status';
+      document.getElementById('saveStatus').textContent='読み込みました：'+file.name;
+      generateMap();
+    }catch(e){
+      statusEl.textContent='案件ファイルを読み込めませんでした（'+e.message+'）。'; statusEl.className='status err';
+    }
+  };
+  r.readAsText(file,'utf-8');
+}
+
+function applyDesignerPreset(){
+  const key = document.getElementById('designerSelect').value;
+  if(key === 'custom') return; // 自由入力のまま何もしない
+  document.getElementById('designerInfo').value = DESIGNER_PRESETS[key];
+}
+
+function ensureMaps(){
+  if(mapsReady) return;
+  const barPx = Math.round(BAR_FRAC * document.getElementById('wideMap').clientWidth) + 2;
+  document.getElementById('wideMap').innerHTML = '';
+  document.getElementById('zoomMap').innerHTML = '';
+  document.getElementById('wideMap').classList.remove('placeholder-wrap');
+  document.getElementById('zoomMap').classList.remove('placeholder-wrap');
+
+  wideMap = L.map('wideMap', {zoomControl:true, scrollWheelZoom:true, wheelPxPerZoomLevel:240, zoomSnap:0.1, zoomDelta:0.5, doubleClickZoom:false});
+  L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+    attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>', maxNativeZoom:18, maxZoom:19
+  }).addTo(wideMap);
+  L.control.scale({metric:true, imperial:false, maxWidth:barPx}).addTo(wideMap);
+
+  zoomMap = L.map('zoomMap', {zoomControl:true, scrollWheelZoom:true, wheelPxPerZoomLevel:240, zoomSnap:0.1, zoomDelta:0.5, doubleClickZoom:false});
+  zoomStd = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+    attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>', maxNativeZoom:18, maxZoom:19
+  }).addTo(zoomMap);
+  zoomPhoto = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
+    attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル（写真）</a>', maxNativeZoom:18, maxZoom:19
+  });
+  L.control.scale({metric:true, imperial:false, maxWidth:barPx}).addTo(zoomMap);
+
+  mapsReady = true;
+}
+
+// スケールバーの長さ(m)＝地図幅の約15%（元の案内図と同じ見た目）になるズームを計算する
+const BAR_FRAC = 0.15;
+function scaleToZoom(barMeters, lat, maxZ=19, widthPx=413){
+  const metersPerPixel = barMeters / (BAR_FRAC * widthPx);
+  const zoom = Math.log2((156543.03392 * Math.cos(lat * Math.PI/180)) / metersPerPixel);
+  return Math.min(maxZ, Math.max(1, zoom));
+}
+// そのズームで、地図幅15%のバーが実際に表す長さ(m)
+function actualScale(zoom, lat, widthPx=413){
+  return 156543.03392 * Math.cos(lat * Math.PI/180) / Math.pow(2, zoom) * BAR_FRAC * widthPx;
+}
+function scaleCaption(requested, actual){
+  if(Math.abs(actual/requested - 1) < 0.12) return 'スケール：' + Math.round(requested) + 'm';
+  const mag = Math.pow(10, Math.floor(Math.log10(actual)) - 1);
+  return 'スケール：約' + (Math.round(actual/mag)*mag) + 'm';
+}
+function teardownLeaflet(){
+  if(!mapsReady) return;
+  lmLayers={wide:null,zoom:null};
+  wideMap.remove(); zoomMap.remove();
+  wideMarker = zoomMarker = null; mapsReady = false; SITE.photo = false;
+}
+function renderGoogle(loc, wideScale, zoomScale, markerLabel){
+  teardownLeaflet();
+  const ww = document.getElementById('wideMap').clientWidth || 413, cw = document.getElementById('zoomMap').clientWidth || 413;
+  const zw = Math.round(scaleToZoom(wideScale, loc.lat, 21, ww));
+  const zc = Math.round(scaleToZoom(zoomScale, loc.lat, 21, cw));
+  const mk = (z, which) => `<div class="zbtns"><button type="button" onclick="googleZoom('${which}',1)" title="拡大">＋</button><button type="button" onclick="googleZoom('${which}',-1)" title="縮小">－</button><button type="button" onclick="gLoad('${which}')" title="地図を読み込み直す（うまく表示されないとき）">↻</button></div><div class="gwrap"></div>`;
+  const w = document.getElementById('wideMap'), c = document.getElementById('zoomMap');
+  w.classList.remove('placeholder-wrap'); c.classList.remove('placeholder-wrap');
+  w.innerHTML = mk(zw,'wide'); c.innerHTML = mk(zc,'zoom'); bindGoogleWheel(w,'wide'); bindGoogleWheel(c,'zoom');
+  document.querySelector('#sheet .maps .map-box:nth-of-type(1) .zoom').textContent = scaleCaption(wideScale, actualScale(zw, loc.lat, ww));
+  document.querySelector('#sheet .maps .map-box:nth-of-type(2) .zoom').textContent = scaleCaption(zoomScale, actualScale(zc, loc.lat, cw));
+  document.getElementById('outCredit').textContent = '地図データ：© Google';
+  SITE.mode='google'; SITE.lat=loc.lat; SITE.lon=loc.lon; SITE.wideZ=zw; SITE.zoomZ=zc; SITE.label=markerLabel;
+  gLoadBoth();
+  if(!SITE.poly.length) resetLot();
+  buildWideOverlay(); buildZoomOverlay();
+}
+
+// 国土地理院（GSI）の住所検索API。日本の住所・字名に強く、まずこちらを試す
+async function geocodeGSI(address){
+  const url = 'https://msearch.gsi.go.jp/address-search/AddressSearch?q=' + encodeURIComponent(address);
+  const res = await fetch(url);
+  if(!res.ok) return null;
+  const data = await res.json();
+  if(!data || data.length === 0) return null;
+  const [lon, lat] = data[0].geometry.coordinates;
+  return {lat, lon, display: data[0].properties.title, source:'国土地理院'};
+}
+
+// OpenStreetMap(Nominatim)。GSIで見つからない場合の予備
+async function geocodeNominatim(address){
+  const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q=' + encodeURIComponent(address);
+  const res = await fetch(url, {headers:{'Accept-Language':'ja'}});
+  if(!res.ok) return null;
+  const data = await res.json();
+  if(!data || data.length === 0) return null;
+  return {lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name, source:'OpenStreetMap'};
+}
+
+// 住所の末尾（番地・号・字名など）を少しずつ削って検索範囲を広げる
+function trimAddressTail(addr){
+  let s = addr.replace(/[\s　]+$/,'');
+  const stripped = s.replace(/(字[^0-9０-９\-−ー]{0,10})?[0-9０-９]+[\-−ー]?[0-9０-９]*\s*(番地?|号)?\s*$/,'');
+  if(stripped && stripped !== s) return stripped.trim();
+  if(s.length > 4) return s.slice(0, -2).trim();
+  return '';
+}
+
+// GSI→Nominatimの順で試し、だめなら住所を少しずつ短くして再検索する
+async function geocodeSmart(address){
+  let query = address;
+  let attempts = 0;
+  while(query && attempts < 5){
+    let r = await geocodeGSI(query).catch(()=>null);
+    if(!r) r = await geocodeNominatim(query).catch(()=>null);
+    if(r){
+      r.approx = (query !== address);
+      r.queryUsed = query;
+      return r;
+    }
+    query = trimAddressTail(query);
+    attempts++;
+  }
+  return null;
+}
+
+const pinIcon = (label) => L.divIcon({
+  className:'',
+  html:`<div style="display:flex;flex-direction:column;align-items:center;transform:translateY(-6px);cursor:grab;">
+          <div style="background:var(--accent);color:#fff;font-size:11px;font-weight:700;
+                      padding:2px 7px;border-radius:3px;white-space:nowrap;margin-bottom:2px;
+                      box-shadow:0 1px 3px rgba(0,0,0,.35);font-family:'小塚ゴシック Pro R','Kozuka Gothic Pro R','Noto Sans JP',sans-serif;">${label}</div>
+          <div style="width:14px;height:14px;background:var(--accent);border:2px solid #fff;border-radius:50% 50% 50% 0;
+                      transform:rotate(-45deg);box-shadow:0 1px 3px rgba(0,0,0,.4);"></div>
+        </div>`,
+  iconSize:[0,0],
+  iconAnchor:[7,20]
+});
+
+// 2枚の地図のピンを同じ位置に同期させる（片方をドラッグしたらもう片方も追従）
+function syncMarkers(latlng, movedFrom){
+  if(wideMarker && movedFrom !== 'wide'){ wideMarker.setLatLng(latlng); wideMap.panTo(latlng); }
+  if(zoomMarker && movedFrom !== 'zoom'){ zoomMarker.setLatLng(latlng); zoomMap.panTo(latlng); }
+}
+
+function placeMarkers(lat, lon, markerLabel){
+  const latlng = [lat, lon];
+  if(wideMarker) wideMap.removeLayer(wideMarker);
+  if(zoomMarker) zoomMap.removeLayer(zoomMarker);
+  wideMarker = L.marker(latlng, {icon: pinIcon(markerLabel), draggable:true}).addTo(wideMap);
+  zoomMarker = L.marker(latlng, {icon: pinIcon(markerLabel), draggable:true}).addTo(zoomMap);
+  wideMarker.on('dragend', () => syncMarkers(wideMarker.getLatLng(), 'wide'));
+  zoomMarker.on('dragend', () => syncMarkers(zoomMarker.getLatLng(), 'zoom'));
+}
+
+// Googleマップの展開済みURLから位置を読み取る。
+//  center：@緯度,経度（共有したときに画面の中心にあった位置）／ pin：!3d緯度!4d経度（Googleが示した「場所」のピン位置）
+function extractGmapPositions(url){
+  const raw = url.match(/^\s*(-?\d{1,3}\.\d+)\s*[,，\s]\s*(-?\d{1,3}\.\d+)\s*$/);   // 「36.1234, 139.1234」のような座標だけの入力
+  if(raw){ const c={lat:parseFloat(raw[1]), lon:parseFloat(raw[2])}; return {center:c, pin:c}; }
+  const num = '(-?\\d+\\.\\d+)';
+  let center=null, pin=null, m;
+  m = url.match(new RegExp('@'+num+','+num));                 if(m) center={lat:parseFloat(m[1]), lon:parseFloat(m[2])};
+  m = url.match(new RegExp('!3d'+num+'!4d'+num));             if(m) pin={lat:parseFloat(m[1]), lon:parseFloat(m[2])};
+  m = url.match(new RegExp('[?&](?:q|query|ll|destination)='+num+',\\s*'+num)); if(m){ const c={lat:parseFloat(m[1]), lon:parseFloat(m[2])}; if(!pin) pin=c; if(!center) center=c; }
+  return (center||pin) ? {center, pin} : null;
+}
+function distanceM(a,b){
+  const R=6371000, rad=Math.PI/180, dLat=(b.lat-a.lat)*rad, dLon=(b.lon-a.lon)*rad;
+  const h=Math.sin(dLat/2)**2+Math.cos(a.lat*rad)*Math.cos(b.lat*rad)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+
+// maps.app.goo.gl などの短縮リンクを、CORSプロキシ経由で展開済みURLに解決する
+async function resolveGoogleMapsLink(shortUrl){
+  const proxied = 'https://api.allorigins.win/get?url=' + encodeURIComponent(shortUrl);
+  const ctl = new AbortController(); const timer = setTimeout(()=>ctl.abort(), 12000);
+  let data;
+  try{
+    const res = await fetch(proxied, {signal: ctl.signal});
+    if(!res.ok) throw new Error('展開サービスが応答しませんでした');
+    data = await res.json();
+  }catch(e){
+    throw new Error(e.name==='AbortError' ? '展開サービスの応答がありませんでした' : (e.message||'リンクの展開に失敗しました'));
+  }finally{ clearTimeout(timer); }
+  const finalUrl = (data.status && data.status.url) ? data.status.url : shortUrl;
+  let pos = extractGmapPositions(finalUrl);
+  if(!pos && data.contents) pos = extractGmapPositions(data.contents);
+  if(!pos) throw new Error('リンクから位置情報を読み取れませんでした');
+  return pos;
+}
+
+// 入力されたGoogleマップのリンクから緯度経度を取得する（短縮リンクは自動で展開）
+// pref：'center'（地図の中心位置）または 'pin'（場所のピン位置）
+async function getLatLngFromGoogleMapsLink(url, pref){
+  let pos = extractGmapPositions(url);
+  if(!pos){
+    if(/goo\.gl/.test(url)) pos = await resolveGoogleMapsLink(url);
+    else throw new Error('このリンクからは位置情報を読み取れませんでした');
+  }
+  const first  = pref==='pin' ? pos.pin : pos.center;
+  const second = pref==='pin' ? pos.center : pos.pin;
+  const use = first || second;
+  const other = (first && second) ? second : null;
+  const gap = other ? distanceM(use, other) : 0;
+  return {lat:use.lat, lon:use.lon, usedLabel: (use===pos.center?'地図の中心位置':'場所のピン位置'), gap, hasBoth: !!other};
+}
+
+
+async function generateMap(){
+  const statusEl = document.getElementById('status');
+  const genBtn = document.getElementById('genBtn');
+  const address = document.getElementById('address').value.trim();
+  const addressLabel = document.getElementById('addressLabel').value.trim() || address;
+  let gmapLink = document.getElementById('googleMapsLink').value.trim();
+  let coordRaw = document.getElementById('coordInput').value.trim();
+  if(coordRaw && !extractGmapPositions(coordRaw) && /^https?:/i.test(coordRaw)){ gmapLink = coordRaw; coordRaw = ''; }   // 位置欄にリンクを入れた場合
+  endDrawUI(); SITE.photo = false; setPhotoBtn();
+  const projectName = document.getElementById('projectName').value.trim();
+  const markerLabel = document.getElementById('markerLabel').value.trim() || '建設地';
+  const wideScale = parseFloat(document.getElementById('wideScale').value) || 200;
+  const zoomScale = parseFloat(document.getElementById('zoomScale').value) || 30;
+  const companyInfo = document.getElementById('companyInfo').value;
+  const designerInfo = document.getElementById('designerInfo').value;
+
+  if(!address && !gmapLink && !coordRaw){
+    statusEl.textContent = '住所・座標・Googleマップのリンクのいずれかを入力してください。';
+    statusEl.className = 'status err';
+    return;
+  }
+
+  document.getElementById('outProject').textContent = projectName;
+  updateDocTitle();
+  document.getElementById('outAddress').textContent = addressLabel;
+  document.getElementById('outCompany').textContent = companyInfo;
+  document.getElementById('outDesigner').textContent = designerInfo;
+
+  document.getElementById('outGmapWrap').style.visibility = 'hidden';
+  SITE.located = false;
+
+  genBtn.disabled = true;
+  statusEl.className = 'status';
+  statusEl.textContent = coordRaw ? '座標から地図を作成しています…' : (gmapLink ? 'Googleマップのリンクから位置を取得しています…' : '住所を検索しています…');
+
+  try{
+    let loc = null;
+    let gmapNote = '';
+    let gmapWarn = '';
+    const setStatus = (t) => {
+      statusEl.textContent = t + (gmapWarn ? '　⚠ ' + gmapWarn : '');
+      statusEl.className = gmapWarn ? 'status err' : 'status';
+    };
+    const coordTxt = (l) => '［使用した位置：' + l.lat.toFixed(6) + ', ' + l.lon.toFixed(6) + '］';
+
+    // 優先順位：座標欄 ＞ Googleマップのリンク ＞ 住所
+    if(coordRaw){
+      const pp = extractGmapPositions(coordRaw);
+      if(pp){ const c = pp.pin || pp.center; loc = {lat:c.lat, lon:c.lon, display: addressLabel || '座標で指定した位置', source:'座標', approx:false}; }
+      else { gmapWarn = '座標の形式を読み取れませんでした（例：36.1234567, 139.1234567）。'; }
+    }
+    if(!loc && gmapLink){
+      try{
+        const g = await getLatLngFromGoogleMapsLink(gmapLink, document.getElementById('gmapPref').value);
+        gmapNote = g.gap>50 ? '（リンクには「地図の中心」と「場所のピン」が約'+Math.round(g.gap)+'m離れて入っていたため、'+g.usedLabel+'を使用しました。違う場合は下の「リンクの位置の使い方」を切り替えてください）' : '';
+        loc = {lat:g.lat, lon:g.lon, display: addressLabel || 'Googleマップのリンクで指定した位置', source:'Googleマップのリンク', approx:false};
+      }catch(gErr){
+        gmapWarn = 'Googleマップのリンクを読み取れなかったため（' + gErr.message + '）、住所検索の位置で代用しています。位置が違う場合は、「建設地の座標」欄に「36.1234, 139.1234」のような座標（Googleマップで建設地を右クリック→先頭の数字をクリックでコピー）を貼ってください。';
+      }
+    }
+
+    if(!loc && address){
+      loc = await geocodeSmart(address);
+    }
+    if(loc && document.getElementById('mapSource').value === 'google'){
+      renderGoogle(loc, wideScale, zoomScale, markerLabel);
+      SITE.located = true; updateQr();
+      setStatus('作成しました（Googleマップ／位置：' + loc.source + '）' + coordTxt(loc) + '。赤い敷地をドラッグして実際の敷地に重ねると、位置も合います。目印の自動追加や地図クリックでの位置合わせは、詳細設定で「地理院地図」にすると使えます。' + gmapNote);
+      return;
+    }
+    ensureMaps();
+    updateCredit();
+
+    setTimeout(()=>{ wideMap.invalidateSize(); zoomMap.invalidateSize(); }, 50);
+
+    const L0 = loc ? loc.lat : 36.5;
+    const ww = document.getElementById('wideMap').clientWidth || 413, cw = document.getElementById('zoomMap').clientWidth || 413;
+    const wideZoom = scaleToZoom(wideScale, L0, 19, ww);
+    const closeZoom = scaleToZoom(zoomScale, L0, 19, cw);
+
+    document.querySelector('#sheet .maps .map-box:nth-of-type(1) .zoom').textContent =
+      scaleCaption(wideScale, actualScale(wideZoom, L0, ww));
+    document.querySelector('#sheet .maps .map-box:nth-of-type(2) .zoom').textContent =
+      scaleCaption(zoomScale, actualScale(closeZoom, L0, cw));
+
+    SITE.label = markerLabel;
+    // 地図をクリックすると、その場所を建設地として位置を合わせ直す。ドラッグで地図を動かした場合は2枚を連動させる
+    const syncFrom=(src,dst)=>()=>{ const c=src.getCenter(); dst.setView(c,dst.getZoom(),{animate:false}); rememberPos(); };
+    wideMap.off('click dragend zoomend moveend'); zoomMap.off('click dragend zoomend moveend');
+    wideMap.on('click',mapClick);
+    zoomMap.on('click',mapClick);
+    wideMap.on('dragend',syncFrom(wideMap,zoomMap)); zoomMap.on('dragend',syncFrom(zoomMap,wideMap));
+    zoomMap.on('zoomend',()=>{ updateZoomShapes(); syncScaleInputs(); });
+    zoomMap.on('moveend',updateQr); wideMap.on('moveend',updateQr);
+    wideMap.on('zoomend',syncScaleInputs);
+
+    if(loc){
+      placeSite(loc.lat, loc.lon);
+      SITE.located = true; updateQr();
+      if(document.getElementById('autoLm').checked && !SITE.marks.some(m=>m.kind!=='manual')) setTimeout(autoLandmarks, 500);
+      const hint='赤い敷地をドラッグして実際の敷地に重ねると、位置も合います（「形を描く」で形をなぞることもできます）。';
+      if(loc.approx){
+        setStatus('「' + loc.queryUsed + '」までの範囲で位置を特定しました（' + loc.source + '）' + coordTxt(loc) + '。番地レベルまでは特定できなかったため、地図をクリックして建設地の位置に合わせてください。');
+      }else{
+        setStatus('作成しました：' + loc.display + '（' + loc.source + '）' + coordTxt(loc) + '。' + hint + gmapNote);
+      }
+    }else{
+      wideMap.setView([36.5, 138.0], 5);
+      zoomMap.setView([36.5, 138.0], 5);
+      statusEl.textContent = '住所が見つかりませんでした。地図をクリックして建設地を指定するか、住所の表記を見直してください（例：都道府県・市区町村から入力）。';
+      statusEl.className = 'status err';
+    }
+  }catch(err){
+    statusEl.textContent = 'エラー：' + err.message;
+    statusEl.className = 'status err';
+  }finally{
+    genBtn.disabled = false;
+  }
+}
+
+// ページ読み込み時に初期値でサンプル生成
+window.addEventListener('load', () => {
+  const has = ['address','coordInput','googleMapsLink'].some(id => document.getElementById(id).value.trim());
+  if(has) generateMap();
+});
+
+// ================= 追加機能（v43）=================
+// ---- 位置をメモ（地図を動かした・敷地を動かした結果を座標欄へ反映し、作り直しても戻らないようにする）----
+function rememberPos(){
+  if(!SITE.located) return;
+  const c=siteCenter();
+  document.getElementById('coordInput').value=c.lat.toFixed(7)+', '+c.lon.toFixed(7);
+}
+
+// ---- ページのどこでも Ctrl+V：座標やGoogleマップのリンクなら、そのまま位置を合わせ直す ----
+function looksLikePos(t){
+  return /^\s*-?\d{1,3}\.\d+\s*[,，\s]\s*-?\d{1,3}\.\d+\s*$/.test(t) || /^https?:\/\/\S*(google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps)/i.test(t.trim());
+}
+document.addEventListener('paste',e=>{
+  const tg=e.target, tag=(tg&&tg.tagName)||'';
+  if(tag==='INPUT'||tag==='TEXTAREA'||(tg&&tg.isContentEditable)) return;
+  const t=((e.clipboardData||window.clipboardData).getData('text')||'').trim();
+  if(!t) return;
+  if(looksLikePos(t)){
+    e.preventDefault();
+    document.getElementById('coordInput').value=t;
+    generateMap();
+  }
+});
+
+// ---- 敷地の重心（m）と、重心へ位置を合わせ直す ----
+function polyCentroid(poly){
+  let a=0,cx=0,cy=0;
+  for(let i=0;i<poly.length;i++){ const [x0,y0]=poly[i],[x1,y1]=poly[(i+1)%poly.length]; const f=x0*y1-x1*y0; a+=f; cx+=(x0+x1)*f; cy+=(y0+y1)*f; }
+  if(Math.abs(a)<1e-6){ return [poly.reduce((s,p)=>s+p[0],0)/poly.length, poly.reduce((s,p)=>s+p[1],0)/poly.length]; }
+  return [cx/(3*a), cy/(3*a)];
+}
+function recenterOnPolygon(){
+  if(!ovz||SITE.poly.length<3) return;
+  const [cx,cy]=polyCentroid(SITE.poly);
+  if(Math.hypot(cx,cy)<0.3){ updateZoomShapes(); return; }
+  SITE.poly=SITE.poly.map(([x,y])=>[x-cx,y-cy]);
+  const c=siteCenter();
+  const nlat=c.lat+cy/111320, nlon=c.lon+cx/(111320*Math.cos(c.lat*Math.PI/180));
+  relocate(nlat,nlon);
+}
+// 縮尺はそのままで、建設地の位置だけを動かす
+function relocate(lat,lon){
+  SITE.lat=lat; SITE.lon=lon;
+  if(SITE.mode==='gsi'){
+    SITE.busyUntil=Date.now()+400;
+    wideMap.setView([lat,lon],wideMap.getZoom(),{animate:false});
+    zoomMap.setView([lat,lon],zoomMap.getZoom(),{animate:false});
+  }else{
+    const w=document.querySelector('#wideMap iframe'), z=document.querySelector('#zoomMap iframe');
+    if(w||z) gLoadBoth();
+  }
+  buildWideOverlay(); buildZoomOverlay(); updateQr(); rememberPos();
+}
+
+// ---- 辺の平行移動：辺を法線方向に動かし、両端の角は隣の辺の上をすべらせる（隣の辺の向きは変わらない）----
+function startEdgeDrag(e,i){
+  if(e.button!==0||drawState) return;
+  e.preventDefault(); e.stopPropagation();
+  const tgt=e.currentTarget; try{ tgt.setPointerCapture(e.pointerId); }catch(_){}
+  const n=SITE.poly.length, poly0=SITE.poly.map(v=>v.slice()), m=mpp(curZoom('zoom'),SITE.lat), p0=svgPointFromEvent(e);
+  const ia=i, ib=(i+1)%n, A=poly0[ia], B=poly0[ib], P=poly0[(i-1+n)%n], N=poly0[(i+2)%n];
+  const L=Math.hypot(B[0]-A[0],B[1]-A[1])||1, nx=-(B[1]-A[1])/L, ny=(B[0]-A[0])/L;
+  const slide=(V,from,d)=>{ // Vの角を、隣の辺(from→V)の延長上で、法線方向にdだけ動く位置へ
+    const vx=V[0]-from[0], vy=V[1]-from[1], dot=vx*nx+vy*ny, len=Math.hypot(vx,vy);
+    if(Math.abs(dot)<0.05*len || Math.abs(d/dot)*len>300) return [V[0]+d*nx, V[1]+d*ny];   // 隣の辺がほぼ平行なら真横に動かす
+    const t=d/dot; return [V[0]+t*vx, V[1]+t*vy];
+  };
+  const lab=svgEl('text',{'font-size':12,'font-weight':700,fill:RED,stroke:'#fff','stroke-width':3,'paint-order':'stroke','text-anchor':'middle'});
+  ovz.svg.appendChild(lab);
+  const move=ev=>{
+    const p=svgPointFromEvent(ev);
+    let d=((p.x-p0.x)*m)*nx+((p0.y-p.y)*m)*ny;
+    d=Math.round(d*10)/10;
+    const np=poly0.map(v=>v.slice());
+    np[ia]=slide(A,P,d); np[ib]=slide(B,N,d);
+    SITE.poly=np; updateZoomShapes();
+    const pa=ovz.W/2+(np[ia][0]+np[ib][0])/2/m, pb=ovz.H/2-(np[ia][1]+np[ib][1])/2/m;
+    lab.setAttribute('x',pa+nx*18); lab.setAttribute('y',pb-ny*18+4);
+    lab.textContent=(d>0?'+':'')+d.toFixed(1)+'m';
+  };
+  const up=()=>{ tgt.removeEventListener('pointermove',move); tgt.removeEventListener('pointerup',up); lab.remove(); };
+  tgt.addEventListener('pointermove',move); tgt.addEventListener('pointerup',up);
+}
+
+// ---- 敷地をまるごとドラッグ（離すと建設地の位置も合う）／回転 ----
+function startMovePoly(e){
+  if(e.button!==0||drawState) return;
+  e.preventDefault(); e.stopPropagation();
+  const tgt=e.currentTarget; try{ tgt.setPointerCapture(e.pointerId); }catch(_){}
+  const m=mpp(curZoom('zoom'),SITE.lat), p0=svgPointFromEvent(e), poly0=SITE.poly.map(v=>v.slice());
+  let moved=false;
+  const move=ev=>{
+    const p=svgPointFromEvent(ev), dx=(p.x-p0.x)*m, dy=(p0.y-p.y)*m;
+    if(Math.abs(p.x-p0.x)+Math.abs(p.y-p0.y)>2) moved=true;
+    SITE.poly=poly0.map(([x,y])=>[x+dx,y+dy]); updateZoomShapes();
+  };
+  const up=()=>{ tgt.removeEventListener('pointermove',move); tgt.removeEventListener('pointerup',up); if(moved) recenterOnPolygon(); };
+  tgt.addEventListener('pointermove',move); tgt.addEventListener('pointerup',up);
+}
+function startRotate(e){
+  if(e.button!==0) return;
+  e.preventDefault(); e.stopPropagation();
+  const tgt=e.currentTarget; try{ tgt.setPointerCapture(e.pointerId); }catch(_){}
+  const [cx,cy]=polyCentroid(SITE.poly), poly0=SITE.poly.map(v=>v.slice());
+  const m=mpp(curZoom('zoom'),SITE.lat), sc={x:ovz.W/2+cx/m, y:ovz.H/2-cy/m};
+  const p0=svgPointFromEvent(e), a0=Math.atan2(p0.y-sc.y,p0.x-sc.x);
+  const move=ev=>{
+    const p=svgPointFromEvent(ev); let da=Math.atan2(p.y-sc.y,p.x-sc.x)-a0;
+    if(ev.shiftKey){ const st=Math.PI/12; da=Math.round(da/st)*st; }
+    const ca=Math.cos(-da), sa=Math.sin(-da);   // 画面のy軸は下向きなので、mの座標では逆回り
+    SITE.poly=poly0.map(([x,y])=>{ const rx=x-cx, ry=y-cy; return [cx+rx*ca-ry*sa, cy+rx*sa+ry*ca]; });
+    updateZoomShapes();
+  };
+  const up=()=>{ tgt.removeEventListener('pointermove',move); tgt.removeEventListener('pointerup',up); };
+  tgt.addEventListener('pointermove',move); tgt.addEventListener('pointerup',up);
+}
+
+// ---- 敷地の形を描く（拡大図で角を順にクリック → 最初の角か「完了」で確定）----
+let drawState=null;
+function lotMsg(t,err){ const el=document.getElementById('lotStatus'); el.textContent=t; el.className='help'+(err?' err':''); }
+function toggleDraw(){
+  if(drawState){ finishDraw(); return; }
+  if(!ovz||!SITE.located){ lotMsg('先に「地図を作成」を押してください。',true); return; }
+  const el=document.getElementById('zoomMap');
+  const W=el.clientWidth,H=el.clientHeight;
+  const svg=svgEl('svg',{class:'ov-draw',width:W,height:H,viewBox:'0 0 '+W+' '+H});
+  svg.style.cssText='position:absolute;left:0;top:0;z-index:900;cursor:crosshair;';
+  svg.appendChild(svgEl('rect',{x:0,y:0,width:W,height:H,fill:'#000','fill-opacity':0.04}));
+  const line=svgEl('polyline',{fill:RED,'fill-opacity':0.35,stroke:RED,'stroke-width':2,'stroke-dasharray':'5 3'});
+  svg.appendChild(line); el.appendChild(svg);
+  drawState={svg,line,pts:[],W,H,cur:null};
+  ['mousedown','touchstart','pointerdown','wheel'].forEach(t=>svg.addEventListener(t,ev=>ev.stopPropagation()));
+  const pt=ev=>{ const p=svg.createSVGPoint(); p.x=ev.clientX; p.y=ev.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); };
+  const redraw=()=>{
+    const all=drawState.pts.concat(drawState.cur?[drawState.cur]:[]);
+    line.setAttribute('points',all.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' '));
+    svg.querySelectorAll('.dv').forEach(n=>n.remove());
+    drawState.pts.forEach((p,i)=>svg.appendChild(svgEl('circle',{class:'dv',cx:p[0],cy:p[1],r:i===0?7:4.5,fill:i===0?'#fff':RED,stroke:RED,'stroke-width':2})));
+  };
+  drawState.redraw=redraw;
+  svg.addEventListener('pointermove',ev=>{ const p=pt(ev); drawState.cur=[p.x,p.y]; redraw(); });
+  svg.addEventListener('click',ev=>{
+    ev.stopPropagation();
+    const p=pt(ev), ps=drawState.pts;
+    if(ps.length>=3 && Math.hypot(p.x-ps[0][0],p.y-ps[0][1])<12){ finishDraw(); return; }
+    ps.push([p.x,p.y]); redraw();
+    lotMsg('角を'+ps.length+'つ指定しました。'+(ps.length>=3?'最初の角（白い丸）をクリックするか、「描き終える」ボタン・Enterで確定します。':'敷地の角を順にクリックしてください。')+'（Escでやめる／Backspaceで1つ戻す）');
+  });
+  svg.addEventListener('dblclick',ev=>{ ev.stopPropagation(); ev.preventDefault(); });
+  svg.addEventListener('contextmenu',ev=>{ ev.preventDefault(); ev.stopPropagation(); if(drawState.pts.length){ drawState.pts.pop(); redraw(); } });
+  document.getElementById('drawBtn').textContent='描き終える';
+  document.getElementById('drawBtn').classList.add('on');
+  lotMsg('拡大図で敷地の角を順にクリックしてください（航空写真にすると合わせやすくなります）。Escでやめる／右クリック・Backspaceで1つ戻す。');
+}
+function endDrawUI(){
+  if(drawState){ drawState.svg.remove(); drawState=null; }
+  document.getElementById('drawBtn').textContent='形を描く';
+  document.getElementById('drawBtn').classList.remove('on');
+}
+function finishDraw(){
+  if(!drawState) return;
+  const ps=drawState.pts, W=drawState.W, H=drawState.H;
+  if(ps.length<3){ endDrawUI(); lotMsg('角が3つ未満のため、描いた形は使いませんでした。'); return; }
+  const m=mpp(curZoom('zoom'),SITE.lat);
+  SITE.poly=ps.map(([x,y])=>[(x-W/2)*m,(H/2-y)*m]);
+  endDrawUI();
+  recenterOnPolygon();
+  lotMsg('敷地の形を確定し、建設地の位置を敷地の中心に合わせました。角は白い丸で、全体は中をドラッグ・右の赤い丸で回転して調整できます。');
+}
+document.addEventListener('keydown',e=>{
+  if(!drawState) return;
+  if(e.key==='Escape'){ endDrawUI(); lotMsg('敷地を描くのをやめました。'); }
+  else if(e.key==='Enter'){ e.preventDefault(); finishDraw(); }
+  else if(e.key==='Backspace'&&!/INPUT|TEXTAREA/.test((e.target.tagName||''))){ e.preventDefault(); drawState.pts.pop(); drawState.redraw(); }
+});
+
+// ---- 拡大図を航空写真に切り替え（敷地合わせ用）----
+function setPhotoBtn(){ const b=document.getElementById('photoBtn'); b.textContent=SITE.photo?'地図に戻す':'航空写真'; b.classList.toggle('on',!!SITE.photo); }
+function togglePhoto(force){
+  if(!SITE.located){ lotMsg('先に「地図を作成」を押してください。',true); return; }
+  SITE.photo=(typeof force==='boolean')?force:!SITE.photo;
+  if(SITE.mode==='gsi'){
+    if(SITE.photo){ zoomStd.remove(); zoomPhoto.addTo(zoomMap); } else { zoomPhoto.remove(); zoomStd.addTo(zoomMap); }
+  }else{
+    gLoad('zoom');
+  }
+  setPhotoBtn(); updateCredit();
+}
+// 印刷：航空写真のままなら地図に戻して、読み込みを待ってから印刷
+async function printSheet(){
+  updateDocTitle(); updateQr();
+  if(drawState) finishDraw();
+  if(SITE.photo && !confirm('拡大図が航空写真のままです。航空写真のまま印刷しますか？\n（「キャンセル」で地図に戻してから印刷します）')){
+    togglePhoto(false);
+    await new Promise(r=>{
+      if(SITE.mode==='gsi'){ let done=false; const f=()=>{ if(!done){done=true;r();} }; zoomStd.once('load',f); setTimeout(f,4000); }
+      else setTimeout(r,2500);
+    });
+  }
+  window.print();
+}
+
+// ---- 地図の枠の大きさが変わったら、赤い図形を描き直す（位置ずれ防止）----
+if(window.ResizeObserver){
+  let rt=null, last='';
+  const ro=new ResizeObserver(()=>{
+    const z=document.getElementById('zoomMap'), w=document.getElementById('wideMap');
+    const k=z.clientWidth+'x'+z.clientHeight+'/'+w.clientWidth+'x'+w.clientHeight;
+    if(k===last) return; last=k;
+    clearTimeout(rt); rt=setTimeout(()=>{ if(!ovz||drawState) return; if(mapsReady){ wideMap.invalidateSize(); zoomMap.invalidateSize(); } buildWideOverlay(); buildZoomOverlay(); },80);
+  });
+  document.addEventListener('DOMContentLoaded',()=>{ ro.observe(document.getElementById('zoomMap')); ro.observe(document.getElementById('wideMap')); });
+}
+
+// ---- 設定を覚える（地図の種類・設計者・目印の自動追加）----
+const REMEMBER=['mapSource','designerSelect','autoLm'];
+document.addEventListener('DOMContentLoaded',()=>{
+  try{
+    REMEMBER.forEach(id=>{ const el=document.getElementById(id), v=localStorage.getItem('annaizu_'+id); if(v==null) return; if(el.type==='checkbox') el.checked=(v==='1'); else el.value=v; });
+    if(document.getElementById('designerSelect').value==='custom'){ const d=localStorage.getItem('annaizu_designerInfo'); if(d) document.getElementById('designerInfo').value=d; }
+    else applyDesignerPreset();
+  }catch(e){}
+  REMEMBER.forEach(id=>document.getElementById(id).addEventListener('change',e=>{ try{ localStorage.setItem('annaizu_'+id, e.target.type==='checkbox'?(e.target.checked?'1':'0'):e.target.value); }catch(_){} }));
+  document.getElementById('designerInfo').addEventListener('change',()=>{ try{ if(document.getElementById('designerSelect').value==='custom') localStorage.setItem('annaizu_designerInfo',document.getElementById('designerInfo').value); }catch(_){} });
+});
+</script>
+
+</body>
+</html>
