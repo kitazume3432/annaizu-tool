@@ -262,7 +262,7 @@
 <body>
 
   <div class="panel">
-    <h1>案内図作成ツール <span class="ver">2026-11-26 版E</span></h1>
+    <h1>案内図作成ツール <span class="ver">2026-11-26 版F</span></h1>
 
     <div class="form">
       <label for="custName">顧客名</label>
@@ -841,16 +841,21 @@ function buildFileBaseName(){
   let name=(m?m[1]:proj).replace(/[\s　]+/g,'').replace(/[\\\/:*?"<>|]/g,'');
   return ymd+'_案内図'+(name?'_'+name:'');
 }
+// タブの名前は「案内図作成ツール」のまま。印刷（PDF保存）のときだけファイル名に切り替える
+const TOOL_TITLE='案内図作成ツール';
+function setPrintTitle(){ document.title=buildFileBaseName(); }
+function restoreTitle(){ document.title=TOOL_TITLE; }
+window.addEventListener('beforeprint',setPrintTitle);
+window.addEventListener('afterprint',restoreTitle);
 function updateDocTitle(){
   const base=buildFileBaseName();
-  document.title=base;
   const h=document.getElementById('fileNameHint');
   if(h) h.textContent='PDF保存時のファイル名：'+base+'.pdf（保存画面で自動入力されます）';
 }
 document.addEventListener('DOMContentLoaded',()=>{
   updateDocTitle();
 });
-window.addEventListener('beforeprint',updateDocTitle);
+window.addEventListener('beforeprint',updateDocTitle); window.addEventListener('beforeprint',setPrintTitle);
 
 
 // 住所をGoogleマップの検索結果で開く（新しいタブ）
@@ -1651,7 +1656,7 @@ async function printSheet(){
       else setTimeout(r,2500);
     });
   }
-  window.print();
+  setPrintTitle(); window.print(); restoreTitle();
 }
 
 // ---- 地図の枠の大きさが変わったら、赤い図形を描き直す（位置ずれ防止）----
